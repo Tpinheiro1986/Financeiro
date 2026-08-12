@@ -279,6 +279,7 @@ tr:hover td{background:#F4F8F5}
     <nav>
       <button class="ativa" data-aba="lancar">Lançar</button>
       <button data-aba="historico">Histórico</button>
+      <button data-aba="cartao">Cartão</button>
       <button data-aba="entradas">Entradas</button>
       <button data-aba="budget">Budget</button>
       <button data-aba="patrimonio">Patrimônio</button>
@@ -374,6 +375,35 @@ tr:hover td{background:#F4F8F5}
       <h2>Extrato de gastos</h2>
       <div class="tabela-scroll" id="extrato"></div>
       <div class="linha-botoes"><button class="btn btn-sec" id="btnExportar">Exportar backup (CSV)</button></div>
+    </div>
+  </section>
+
+  <!-- ============ ABA CARTÃO (FATURA) ============ -->
+  <section class="aba" id="aba-cartao">
+    <div class="mes-nav">
+      <button id="fatAnt" aria-label="Mês anterior">‹</button>
+      <div class="mes-atual" id="fatLabel"></div>
+      <button id="fatProx" aria-label="Próximo mês">›</button>
+    </div>
+
+    <div class="card">
+      <h2>Fatura do cartão <span class="sub">tudo que foi lançado no crédito neste mês</span></h2>
+      <div class="resultado-sim" id="fatResumo" style="margin-top:0"></div>
+    </div>
+
+    <div class="card">
+      <h2>Fatura por categoria</h2>
+      <div id="fatCategorias"></div>
+    </div>
+
+    <div class="card">
+      <h2>Itens da fatura</h2>
+      <div class="tabela-scroll" id="fatItens"></div>
+    </div>
+
+    <div class="card">
+      <h2>Próximas faturas <span class="sub">parcelas já comprometidas nos meses seguintes</span></h2>
+      <div id="fatFuturas"></div>
     </div>
   </section>
 
@@ -492,6 +522,17 @@ tr:hover td{background:#F4F8F5}
 
 <div class="status" id="status"></div>
 
+<div class="modal-fundo" id="modalDup" role="dialog" aria-modal="true" aria-labelledby="dupTitulo">
+  <div class="modal">
+    <h3 id="dupTitulo">Possível lançamento duplicado</h3>
+    <p id="dupTexto"></p>
+    <div class="opcoes">
+      <button id="dupCancelar">Cancelar (recomendado)</button>
+      <button id="dupConfirmar" class="perigo">Registrar mesmo assim</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-fundo" id="modalExcluir" role="dialog" aria-modal="true" aria-labelledby="modalTitulo">
   <div class="modal">
     <h3 id="modalTitulo">Excluir lançamento</h3>
@@ -509,8 +550,8 @@ tr:hover td{background:#F4F8F5}
    CONFIGURAÇÃO — cole aqui os dados do SEU projeto Supabase
    (Dashboard > Project Settings > Data API / API Keys)
    ============================================================ */
-const SUPABASE_URL      = "https://gjhczhmcctspwvxsgunv.supabase.co";      // ex.: https://abcdefgh.supabase.co
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdqaGN6aG1jY3RzcHd2eHNndW52Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1NTg3MDcsImV4cCI6MjEwMjEzNDcwN30.ALrrCRU64y4GyGDgwkThuUi44n6z69Mp3MW0OTls5So";   // chave "anon public"
+const SUPABASE_URL      = "https://gjhczhmcctspwvxsgunv.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdqaGN6aG1jY3RzcHd2eHNndW52Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1NTg3MDcsImV4cCI6MjEwMjEzNDcwN30.ALrrCRU64y4GyGDgwkThuUi44n6z69Mp3MW0OTls5So";
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -586,7 +627,7 @@ document.getElementById('btnSair').addEventListener('click', async ()=>{
 function rowParaLanc(r){
   return {
     id: r.id, data: r.data, categoria: r.categoria, descricao: r.descricao||'',
-    valor: Number(r.valor), forma: r.forma, quem: r.quem||'',
+    valor: Number(r.valor), forma: r.forma, quem: r.quem||'', criado_em: r.criado_em||'',
     parcela: r.parcela_total>1 ? {n:r.parcela_n, total:r.parcela_total, grupo:r.parcela_grupo} : null,
     recorrente: r.recorrente_total>1 ? {n:r.recorrente_n, total:r.recorrente_total, grupo:r.recorrente_grupo} : null
   };
@@ -671,36 +712,64 @@ document.getElementById('btnLancar').addEventListener('click', async ()=>{
   const recorrencia = parseInt(document.getElementById('gRecorrente').value);
   if(parcelas>1 && recorrencia>1){ avisar("Use parcelas OU recorrência, não os dois juntos"); return; }
 
+  const agora = new Date().toISOString();
   const linhas = [];
   if(recorrencia>1){
     const grupoR = uid();
     for(let i=0;i<recorrencia;i++){
       linhas.push({ id:uid(), data:addMeses(data,i), categoria:cat, descricao:desc, valor, forma:formaSel,
-        recorrente_n:i+1, recorrente_total:recorrencia, recorrente_grupo:grupoR, quem });
+        recorrente_n:i+1, recorrente_total:recorrencia, recorrente_grupo:grupoR, quem, criado_em:agora });
     }
   }else{
     const grupo = parcelas>1 ? uid() : null;
     const vParcela = Math.round((valor/parcelas)*100)/100;
     for(let i=0;i<parcelas;i++){
       linhas.push({ id:uid(), data:addMeses(data,i), categoria:cat, descricao:desc, valor:vParcela, forma:formaSel,
-        parcela_n: parcelas>1?i+1:null, parcela_total: parcelas>1?parcelas:null, parcela_grupo:grupo, quem });
+        parcela_n: parcelas>1?i+1:null, parcela_total: parcelas>1?parcelas:null, parcela_grupo:grupo, quem, criado_em:agora });
     }
   }
 
+  const msg = recorrencia>1 ? `Gasto recorrente lançado por ${recorrencia} meses`
+       : parcelas>1 ? `Gasto lançado em ${parcelas}x de ${fmt(linhas[0].valor)}`
+       : "Gasto registrado";
+
+  /* TRAVA ANTI-DUPLICIDADE: já existe lançamento igual (mesma data, categoria, valor e forma)? */
+  const jaExiste = dados.lancamentos.some(l =>
+    l.data===linhas[0].data && l.categoria===cat && l.forma===formaSel &&
+    Math.abs(l.valor - linhas[0].valor) < 0.005
+  );
+  if(jaExiste){
+    lancPendente = { linhas, msg };
+    document.getElementById('dupTexto').textContent =
+      `Já existe um lançamento de ${fmt(linhas[0].valor)} em "${cat}" no ${formaSel} com a mesma data. Pode ser um lançamento repetido — confira em "Últimos lançamentos" antes de continuar.`;
+    document.getElementById('modalDup').classList.add('aberto');
+    return;
+  }
+  await inserirLancamentos(linhas, msg);
+});
+
+let lancPendente = null;
+async function inserirLancamentos(linhas, msg){
   const btn = document.getElementById('btnLancar');
   btn.disabled = true;
   const { error } = await sb.from('lancamentos').insert(linhas);
   btn.disabled = false;
   if(error){ erroBanco(error); return; }
-
   dados.lancamentos.push(...linhas.map(rowParaLanc));
   document.getElementById('gDesc').value='';
   document.getElementById('gValor').value='';
   document.getElementById('gRecorrente').value='1';
-  avisar(recorrencia>1 ? `Gasto recorrente lançado por ${recorrencia} meses`
-       : parcelas>1 ? `Gasto lançado em ${parcelas}x`
-       : "Gasto registrado");
+  avisar(msg);
   renderTudo();
+}
+document.getElementById('dupConfirmar').addEventListener('click', async ()=>{
+  document.getElementById('modalDup').classList.remove('aberto');
+  if(lancPendente){ await inserirLancamentos(lancPendente.linhas, lancPendente.msg); lancPendente=null; }
+});
+document.getElementById('dupCancelar').addEventListener('click', ()=>{
+  document.getElementById('modalDup').classList.remove('aberto');
+  lancPendente = null;
+  avisar("Lançamento cancelado");
 });
 
 /* =================== CATEGORIAS =================== */
@@ -902,7 +971,9 @@ function renderTudo(){
     .reduce((s,x)=>s+x.valor,0);
   document.getElementById('hParcelas').textContent = fmt(futuras);
 
-  const ult = [...dados.lancamentos].sort((a,b)=>b.data.localeCompare(a.data)).slice(0,8);
+  const ult = [...dados.lancamentos]
+    .sort((a,b)=>(b.criado_em||'').localeCompare(a.criado_em||'') || b.data.localeCompare(a.data))
+    .slice(0,10);
   document.getElementById('ultimos').innerHTML = ult.length
     ? `<table><thead><tr><th>Data</th><th>Categoria</th><th>Forma</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${ult.map(linhaGasto).join('')}</tbody></table>`
     : `<div class="vazio">Nenhum gasto lançado ainda. Registre o primeiro acima.</div>`;
@@ -943,6 +1014,59 @@ function renderTudo(){
 
   renderBudget();
   renderPatrimonio();
+  renderFatura();
+}
+
+/* =================== FATURA DO CARTÃO =================== */
+let mesFatura = new Date();
+document.getElementById('fatAnt').addEventListener('click',()=>{ mesFatura.setMonth(mesFatura.getMonth()-1); renderFatura(); });
+document.getElementById('fatProx').addEventListener('click',()=>{ mesFatura.setMonth(mesFatura.getMonth()+1); renderFatura(); });
+
+function creditosDoMes(d){
+  const ini = isoLocal(new Date(d.getFullYear(), d.getMonth(), 1));
+  const fim = isoLocal(new Date(d.getFullYear(), d.getMonth()+1, 0));
+  return dados.lancamentos.filter(x=>x.forma==='Crédito' && x.data>=ini && x.data<=fim);
+}
+
+function renderFatura(){
+  document.getElementById('fatLabel').textContent = nomeMes(mesFatura);
+  const itens = creditosDoMes(mesFatura).sort((a,b)=>a.data.localeCompare(b.data));
+  const total = itens.reduce((s,x)=>s+x.valor,0);
+  const parc  = itens.filter(x=>x.parcela).reduce((s,x)=>s+x.valor,0);
+  const avista= total - parc;
+
+  document.getElementById('fatResumo').innerHTML = `
+    <div class="res-box destaque"><div class="rotulo">Total da fatura</div><div class="valor">${fmt(total)}</div></div>
+    <div class="res-box"><div class="rotulo">Compras à vista (1x)</div><div class="valor">${fmt(avista)}</div></div>
+    <div class="res-box"><div class="rotulo">Parcelas no mês</div><div class="valor">${fmt(parc)}</div></div>`;
+
+  /* Por categoria */
+  const porCat = {};
+  itens.forEach(g=>{ porCat[g.categoria]=(porCat[g.categoria]||0)+g.valor; });
+  const cats = Object.entries(porCat).sort((a,b)=>b[1]-a[1]);
+  const maior = cats.length ? cats[0][1] : 1;
+  document.getElementById('fatCategorias').innerHTML = cats.length
+    ? cats.map(([c,v])=>`
+      <div class="barra-cat">
+        <div class="topo"><span class="nome">${c}</span><span class="mono">${fmt(v)} <span style="color:var(--cinza)">(${(v/total*100).toFixed(1)}%)</span></span></div>
+        <div class="trilho"><div class="preenchido" style="width:${(v/maior*100)}%"></div></div>
+      </div>`).join('')
+    : `<div class="vazio">Nenhum gasto no crédito em ${nomeMes(mesFatura)}.</div>`;
+
+  /* Itens */
+  document.getElementById('fatItens').innerHTML = itens.length
+    ? `<table><thead><tr><th>Data</th><th>Categoria</th><th>Detalhe</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${itens.map(linhaGasto).join('')}</tbody></table>`
+    : `<div class="vazio">Nenhum item nesta fatura.</div>`;
+
+  /* Próximas 6 faturas */
+  let futHtml = '';
+  for(let i=1;i<=6;i++){
+    const d = new Date(mesFatura.getFullYear(), mesFatura.getMonth()+i, 1);
+    const t = creditosDoMes(d).reduce((s,x)=>s+x.valor,0);
+    if(t>0) futHtml += `<div class="resumo-linha"><span style="text-transform:capitalize">${nomeMes(d)}</span><span class="v">${fmt(t)}</span></div>`;
+  }
+  document.getElementById('fatFuturas').innerHTML = futHtml ||
+    `<div class="vazio">Nenhuma parcela comprometida nos próximos 6 meses.</div>`;
 }
 
 /* =================== EXPORTAR CSV =================== */
