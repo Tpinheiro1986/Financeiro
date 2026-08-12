@@ -233,6 +233,12 @@ tr:hover td{background:#F4F8F5}
 .modal .opcoes button.perigo{background:#FBEDE9;border-color:#EAC5BC;color:var(--vermelho)}
 .modal .opcoes button.perigo:hover{background:#F5D9D1}
 .modal .opcoes button.cancelar{color:var(--cinza);text-align:center}
+.modal label{margin-top:10px}
+.modal select,.modal input[type=text]{margin-bottom:4px}
+.check-serie{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13.5px;color:var(--tinta);text-transform:none;letter-spacing:0;font-weight:500;cursor:pointer}
+.check-serie input{width:auto;accent-color:var(--verde)}
+.cat-click{cursor:pointer;border-bottom:1px dashed var(--verde)}
+.cat-click:hover{color:var(--verde)}
 
 @media (max-width:600px){
   .saldo-item{min-width:calc(50% - 10px)}
@@ -521,6 +527,24 @@ tr:hover td{background:#F4F8F5}
 </div><!-- fim #app -->
 
 <div class="status" id="status"></div>
+
+<div class="modal-fundo" id="modalEditar" role="dialog" aria-modal="true" aria-labelledby="editTitulo">
+  <div class="modal">
+    <h3 id="editTitulo">Editar lançamento</h3>
+    <p id="editTexto"></p>
+    <label for="editCategoria">Categoria</label>
+    <select id="editCategoria"></select>
+    <label for="editDesc">Descrição</label>
+    <input type="text" id="editDesc" placeholder="Descrição">
+    <label class="check-serie" id="editSerieWrap" style="display:none">
+      <input type="checkbox" id="editSerie" checked> Aplicar a todas as parcelas / repetições da série
+    </label>
+    <div class="opcoes" style="margin-top:14px">
+      <button id="editSalvar" style="background:var(--verde);color:#fff;border-color:var(--verde);text-align:center">Salvar alteração</button>
+      <button id="editCancelar" class="cancelar">Cancelar</button>
+    </div>
+  </div>
+</div>
 
 <div class="modal-fundo" id="modalDup" role="dialog" aria-modal="true" aria-labelledby="dupTitulo">
   <div class="modal">
@@ -879,6 +903,58 @@ async function excluirEnt(id){
   renderTudo(); avisar("Entrada excluída");
 }
 
+/* =================== EDITAR CATEGORIA / DESCRIÇÃO =================== */
+let editPendente = null;
+
+function abrirEdicao(id){
+  const l = dados.lancamentos.find(x=>x.id===id);
+  if(!l) return;
+  editPendente = l;
+  const sel = document.getElementById('editCategoria');
+  sel.innerHTML = dados.categorias.map(c=>`<option${c===l.categoria?' selected':''}>${c}</option>`).join('');
+  document.getElementById('editDesc').value = l.descricao || '';
+  const serie = l.parcela ? `parcela ${l.parcela.n}/${l.parcela.total}` : l.recorrente ? `recorrente ${l.recorrente.n}/${l.recorrente.total}` : '';
+  document.getElementById('editTexto').textContent =
+    `${l.data.split('-').reverse().join('/')} — ${fmt(l.valor)} no ${l.forma}${serie?' ('+serie+')':''}`;
+  const temSerie = !!(l.parcela || l.recorrente);
+  document.getElementById('editSerieWrap').style.display = temSerie ? 'flex' : 'none';
+  document.getElementById('editSerie').checked = temSerie;
+  document.getElementById('modalEditar').classList.add('aberto');
+}
+function fecharEdicao(){
+  document.getElementById('modalEditar').classList.remove('aberto');
+  editPendente = null;
+}
+document.getElementById('editCancelar').addEventListener('click', fecharEdicao);
+document.getElementById('modalEditar').addEventListener('click', e=>{
+  if(e.target.id==='modalEditar') fecharEdicao();
+});
+document.getElementById('editSalvar').addEventListener('click', async ()=>{
+  if(!editPendente) return;
+  const l = editPendente;
+  const novaCat  = document.getElementById('editCategoria').value;
+  const novaDesc = document.getElementById('editDesc').value.trim();
+  const aplicarSerie = (l.parcela || l.recorrente) && document.getElementById('editSerie').checked;
+
+  let q = sb.from('lancamentos').update({categoria:novaCat, descricao:novaDesc});
+  if(aplicarSerie && l.parcela)          q = q.eq('parcela_grupo', l.parcela.grupo);
+  else if(aplicarSerie && l.recorrente)  q = q.eq('recorrente_grupo', l.recorrente.grupo);
+  else                                   q = q.eq('id', l.id);
+  const { error } = await q;
+  if(error){ erroBanco(error); return; }
+
+  if(aplicarSerie && l.parcela){
+    dados.lancamentos.forEach(x=>{ if(x.parcela && x.parcela.grupo===l.parcela.grupo){ x.categoria=novaCat; x.descricao=novaDesc; } });
+  }else if(aplicarSerie && l.recorrente){
+    dados.lancamentos.forEach(x=>{ if(x.recorrente && x.recorrente.grupo===l.recorrente.grupo){ x.categoria=novaCat; x.descricao=novaDesc; } });
+  }else{
+    l.categoria=novaCat; l.descricao=novaDesc;
+  }
+  fecharEdicao();
+  renderTudo();
+  avisar(aplicarSerie ? "Série inteira atualizada" : "Lançamento atualizado");
+});
+
 /* =================== PERÍODO (SEMANA / MÊS / ANO) =================== */
 const isoLocal = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 
@@ -939,7 +1015,7 @@ function linhaGasto(l){
   ].join(' ');
   return `<tr>
     <td class="mono">${l.data.split('-').reverse().join('/')}</td>
-    <td><strong>${l.categoria}</strong>${l.descricao?`<div class="desc-mini">${l.descricao}</div>`:''}</td>
+    <td><strong class="cat-click" onclick="abrirEdicao('${l.id}')" title="Clique para editar categoria e descrição">${l.categoria}</strong>${l.descricao?`<div class="desc-mini">${l.descricao}</div>`:''}</td>
     <td>${tags}${l.quem?`<div class="desc-mini">${l.quem}</div>`:''}</td>
     <td class="num">${fmt(l.valor)}</td>
     <td><button class="btn-mini" onclick="excluirLanc('${l.id}')" aria-label="Excluir">×</button></td>
