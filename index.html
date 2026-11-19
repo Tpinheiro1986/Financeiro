@@ -752,16 +752,17 @@ function vLanc(){
       <label style="font-size:13.5px;display:flex;gap:6px;align-items:center"><input type="checkbox" ${UI.arquivo?'checked':''} onchange="UI.arquivo=this.checked;ir('lanc')"> Mostrar histórico anterior ao Marco Zero</label></div>
     </div>
     <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:14px;margin-bottom:8px"><span>Despesas: <b class="neg">${fmt(tg)}</b></span><span>Receitas: <b class="pos">${fmt(tr)}</b></span><span>${lista.length} lançamentos</span></div>
-    ${lista.length? (ateHoje.length? tabela(ateHoje) : `<div class="vazio">Nada lançado até hoje neste mês.</div>`)
+    ${!b && !UI.catLanc && planoMes(k) && !S.ent.some(e=>ym(e.data)===k) ? `<div class="diag-item info" style="margin-bottom:10px">${ico('infoI')}<div>Receitas planejadas para ${nomeYM(k)}: <b>${fmt(planoMes(k))}</b> (${planoItens(k).map(p=>esc(p.descricao)+' '+fmt0(p.valor)).join(', ')}). <button class="btn link" onclick="editarPlanoReceitas(${+k.slice(0,4)})">Editar receitas planejadas</button> · quando receber, lance a receita real e ela substitui o plano do mês.</div></div>` : ''}
+    ${lista.length? (ateHoje.length? tabela(ateHoje) : (k>ym(HOJE)?'':`<div class="vazio">Nada lançado até hoje neste mês.</div>`))
       + (futuros.length? `<div class="sub-lista"><span>Agendados para depois de hoje (${futuros.length})</span><span>${fmt(soma(futuros))}</span></div>${tabela(futuros)}` : '')
       : `<div class="vazio">${b?'Nada encontrado para essa busca.':`Nenhum lançamento em ${nomeYM(k)}${UI.arquivo?'':' após o Marco Zero'}. Use o formulário acima para registrar.`}</div>`}
   </section>`;
 }
 function linhaLanc(l){
   const arq = l.data<corte();
-  if(l._t==='r') return `<tr class="${arq?'arquivo':''} ${NOVOS.has(l.id)?'novo':''}"><td>${dataBR(l.data)}</td><td><div class="lanc-desc">${esc(l.descricao)}</div><div class="lanc-meta"><span class="etiqueta pos">Receita</span>${l.quem?esc(l.quem):''}${arq?'<span class="etiqueta">Arquivo</span>':''}</div></td><td class="esconde-m">—</td><td class="n pos valor">${fmt(l.valor)}</td><td><div class="acoes"><button class="icone-btn" aria-label="Excluir receita" onclick="excluirEnt('${l.id}')">${ico('lixo')}</button></div></td></tr>`;
+  if(l._t==='r') return `<tr class="${arq?'arquivo':''} ${NOVOS.has(l.id)?'novo':''}"><td>${dataBR(l.data)}</td><td><div class="lanc-desc">${esc(l.descricao)}</div><div class="lanc-meta"><span class="etiqueta pos">Receita</span>${l.quem?esc(l.quem):''}${arq?'<span class="etiqueta">Arquivo</span>':''}</div></td><td class="esconde-m">—</td><td class="n pos valor">${fmt(l.valor)}</td><td><div class="acoes"><button class="icone-btn" aria-label="Editar receita" onclick="editarReceita('${l.id}')">${ico('editar')}</button><button class="icone-btn" aria-label="Excluir receita" onclick="excluirEnt('${l.id}')">${ico('lixo')}</button></div></td></tr>`;
   const venc=faturaVenc(l);
-  return `<tr class="${arq?'arquivo':''} ${NOVOS.has(l.id)?'novo':''}" id="l-${l.id}"><td>${dataBR(l.data)}</td><td><div class="lanc-desc">${esc(l.descricao||l.categoria)}${NOVOS.has(l.id)?' <span class="etiqueta pos">Lançado agora</span>':''}</div><div class="lanc-meta"><span>${esc(l.categoria)}</span>
+  return `<tr class="${arq?'arquivo':''} ${NOVOS.has(l.id)?'novo':''}" id="l-${l.id}"><td>${dataBR(l.data)}</td><td><div class="lanc-desc">${esc(l.origem==='fixo_orcado'?l.categoria:(l.descricao||l.categoria))}${NOVOS.has(l.id)?' <span class="etiqueta pos">Lançado agora</span>':''}</div><div class="lanc-meta"><span>${esc(l.categoria)}</span>
     ${l.parcela?`<span class="etiqueta info">${l.parcela.n}/${l.parcela.total}</span>`:''}${l.recorrente?`<span class="etiqueta info">Recorrente ${l.recorrente.n}/${l.recorrente.total}</span>`:''}
     ${l.origem==='fixo_orcado'?'<span class="etiqueta">Conta fixa</span>':''}${essencial(l)?'':'<span class="etiqueta alerta">Não essencial</span>'}${venc?`<span>fatura ${dataBR(venc).slice(0,5)}</span>`:''}${l.quem?`<span>· ${esc(l.quem)}</span>`:''}${arq?'<span class="etiqueta">Arquivo</span>':''}</div></td>
     <td class="esconde-m">${esc(l.forma)}${l.cartao?' · '+esc(l.cartao):''}</td><td class="n valor">${fmt(l.valor)}</td>
@@ -843,6 +844,26 @@ function pedirExclusao(id){
   document.getElementById('xUm').onclick=async()=>{ const {error}=await sb.from('lancamentos').delete().eq('id',id); if(error) return erroBanco(error,'excluir'); S.lanc=S.lanc.filter(x=>x.id!==id); fecharModal(); avisar('Lançamento excluído'); ir(vistaAtual); };
   if(g) document.getElementById('xSerie').onclick=async()=>{ const col=l.parcela?'parcela_grupo':'recorrente_grupo'; const {error}=await sb.from('lancamentos').delete().eq(col,g).gte('data',l.data); if(error) return erroBanco(error,'excluir');
     S.lanc=S.lanc.filter(x=>!((x.parcela?.grupo||x.recorrente?.grupo)===g && x.data>=l.data)); fecharModal(); avisar('Lançamentos excluídos'); ir(vistaAtual); };
+}
+
+function editarReceita(id){
+  const e=S.ent.find(x=>x.id===id); if(!e) return;
+  const seguintes=S.ent.filter(x=>x.id!==id && x.descricao===e.descricao && x.data>e.data);
+  abrirModal(`<h2>Editar receita</h2><div class="linha-campos" style="margin-top:12px">
+   <div class="campo" style="grid-column:1/-1"><label for="rDesc">Descrição</label><input type="text" id="rDesc" value="${esc(e.descricao)}"></div>
+   <div class="campo"><label for="rVal">Valor (R$)</label><input type="number" step="0.01" id="rVal" value="${e.valor}"></div>
+   <div class="campo"><label for="rData">Data</label><input type="date" id="rData" value="${e.data}"></div>
+   <div class="campo"><label for="rQuem">De quem</label><input type="text" id="rQuem" value="${esc(e.quem||'')}"></div></div>
+   ${seguintes.length?`<label style="display:flex;gap:8px;margin-top:14px;font-size:14px"><input type="checkbox" id="rSeg"> Aplicar descrição e valor também às ${seguintes.length} receitas seguintes "${esc(e.descricao)}"</label>`:''}
+   <div class="botoes"><button class="btn sec" onclick="fecharModal()">Cancelar</button><button class="btn" id="rOk">Salvar receita</button></div>`);
+  document.getElementById('rOk').onclick=async()=>{
+    const desc=document.getElementById('rDesc').value.trim(), valor=parseFloat(document.getElementById('rVal').value), data=document.getElementById('rData').value, quem=document.getElementById('rQuem').value.trim();
+    if(!desc||!(valor>0)||!data) return avisar('Descrição, valor e data são obrigatórios.');
+    let r=await sb.from('entradas').update({descricao:desc,valor,data,quem}).eq('id',id); if(r.error) return erroBanco(r.error);
+    const aplicar=document.getElementById('rSeg')?.checked;
+    if(aplicar){ const ids=seguintes.map(x=>x.id); r=await sb.from('entradas').update({descricao:desc,valor}).in('id',ids); if(r.error) return erroBanco(r.error); seguintes.forEach(x=>Object.assign(x,{descricao:desc,valor})); }
+    Object.assign(e,{descricao:desc,valor,data,quem}); fecharModal(); avisar(aplicar?`Receita atualizada (e mais ${seguintes.length})`:'Receita atualizada'); ir(vistaAtual);
+  };
 }
 async function excluirEnt(id){
   const e=S.ent.find(x=>x.id===id);
