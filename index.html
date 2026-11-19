@@ -472,6 +472,14 @@ function totaisPatrimonio(){
   const dividas = passivos + cartaoAberto;
   return { ativos:soma(at), disp, inv, bens, passivos, cartaoAberto, dividas, liquido: soma(at) - dividas };
 }
+const ehFinanceiro = p => DISPONIVEL.includes(p.tipo) || INVEST.includes(p.tipo);
+function taxasItem(p, ajusteR=0){
+  const fin=ehFinanceiro(p);
+  const r = (p.rentab_aa!=null && p.rentab_aa!=='' ? +p.rentab_aa : (fin ? +S.cfg.premissas.rentab_aa||0 : 0)) + (fin?ajusteR:0);
+  const d = p.deprec_aa!=null && p.deprec_aa!=='' ? +p.deprec_aa : (p.tipo==='Veículo'?10:0);
+  return {r,d,rPadrao:p.rentab_aa==null&&fin, dPadrao:p.deprec_aa==null&&p.tipo==='Veículo'};
+}
+const valorItem = (p, meses, ajusteR=0) => { const {r,d}=taxasItem(p,ajusteR); return p.valor*Math.pow((1+r/100)*(1-d/100), meses/12); };
 const fixoNoMes = (cat,k) => S.lanc.find(l=>l.origem==='fixo_orcado' && l.categoria===cat && ym(l.data)===k);
 const EXTRA = /13|décimo|ferias|férias|bônus|bonus|plr/i;
 const planoItens = k => S.planoRec.filter(p=>p.ano===+k.slice(0,4) && p.mes===+k.slice(5,7));
@@ -1075,7 +1083,8 @@ function projetar(ajuste){
   const P=S.cfg.premissas, tp=totaisPatrimonio(), H=UI.horizonte;
   const renda0=rendaBase(), fix0=fixasBase(), var0=+P.gasto_variavel_mensal||0;
   const g=((+P.cresc_renda_aa||0)+ajuste.g)/100, inf=((+P.inflacao_aa||0)+ajuste.i)/100, r=((+P.rentab_aa||0)+ajuste.r)/100;
-  const rm=Math.pow(1+r,1/12)-1; let caixa=tp.disp+tp.inv - tp.cartaoAberto; const out=[], k0=ym(HOJE);
+  const rm=Math.pow(1+r,1/12)-1; let caixa=-tp.cartaoAberto; const out=[], k0=ym(HOJE);
+  const ativos=S.pat.filter(p=>p.natureza==='ativo');
   const passivoAmort = S.pat.filter(p=>p.natureza==='passivo'); let passivos=tp.passivos;
   const anosPlano=S.planoRec.map(p=>p.ano), ultPlano=anosPlano.length?Math.max(...anosPlano):0;
   const anosOrc=Object.keys(S.bud).map(Number).filter(a=>Object.keys(S.bud[a]).length), ultOrc=anosOrc.length?Math.max(...anosOrc):0;
@@ -1094,7 +1103,8 @@ function projetar(ajuste){
     else desp=(fix0+var0)*Math.pow(1+inf,(t-1)/12)+parcelas;
     const amort=soma(passivoAmort.filter(p=>p.valor_parcela && (p.parcelas_restantes==null||t<=p.parcelas_restantes)),p=>+p.valor_parcela);
     caixa = caixa*(1+rm) + renda - desp; passivos=Math.max(0,passivos-amort);
-    out.push({k, renda, desp, saldo:renda-desp, caixa, pl: caixa + tp.bens - passivos});
+    const fin=soma(ativos.filter(ehFinanceiro),p=>valorItem(p,t,ajuste.r)), bens=soma(ativos.filter(p=>!ehFinanceiro(p)),p=>valorItem(p,t,ajuste.r));
+    out.push({k, renda, desp, saldo:renda-desp, caixa: caixa+fin, pl: caixa + fin + bens - passivos, bens});
   }
   return out;
 }
@@ -1336,7 +1346,7 @@ async function revisarVaz(id,v){ const r={...(S.cfg.vazamentos_revisao||{})}; if
 function vPat(){
   const tp=totaisPatrimonio(); const at=S.pat.filter(p=>p.natureza==='ativo').sort((a,b)=>b.valor-a.valor), pa=S.pat.filter(p=>p.natureza==='passivo');
   const linha=p=>{ const dias=p.atualizado_em? Math.round((Date.now()-new Date(p.atualizado_em))/864e5):null;
-    return `<tr><td><b>${esc(p.nome)}</b><div class="lanc-meta">${esc(p.tipo)}${p.instituicao?' · '+esc(p.instituicao):''}${p.parcelas_restantes?` · ${p.parcelas_restantes} parcelas de ${fmt(+p.valor_parcela||0)}`:''}${dias!=null&&dias>60?` <span class="etiqueta alerta">atualizado há ${dias} dias</span>`:''}</div></td><td class="n valor">${fmt0(p.valor)}</td>
+    return `<tr><td><b>${esc(p.nome)}</b><div class="lanc-meta">${esc(p.tipo)}${p.instituicao?' · '+esc(p.instituicao):''}${p.parcelas_restantes?` · ${p.parcelas_restantes} parcelas de ${fmt(+p.valor_parcela||0)}`:''}${p.natureza==='ativo'?(()=>{const t=taxasItem(p); return (t.r?` · <span class="pos">+${String(t.r).replace('.',',')}% a.a.${t.rPadrao?' (premissa)':''}</span>`:'')+(t.d?` · <span class="neg">−${String(t.d).replace('.',',')}% a.a.${t.dPadrao?' (padrão)':''}</span>`:'');})():''}${dias!=null&&dias>60?` <span class="etiqueta alerta">atualizado há ${dias} dias</span>`:''}</div></td><td class="n valor">${fmt0(p.valor)}</td>
     <td><div class="acoes"><button class="icone-btn" aria-label="Editar ${esc(p.nome)}" onclick="editarBem('${p.id}')">${ico('editar')}</button><button class="icone-btn" aria-label="Excluir ${esc(p.nome)}" onclick="excluirBem('${p.id}')">${ico('lixo')}</button></div></td></tr>`; };
   const grupos={}; at.forEach(p=>grupos[p.tipo]=(grupos[p.tipo]||0)+p.valor);
   vPat.depois=()=>ligarTips(document.getElementById('conteudo'));
@@ -1346,9 +1356,49 @@ function vPat(){
     <section class="painel"><h2>Ativos</h2><div class="rolagem" style="margin-top:8px">${at.length?`<table class="tabela"><tbody>${at.map(linha).join('')}</tbody></table>`:'<div class="vazio">Nenhum ativo cadastrado.</div>'}</div></section>
     <section class="painel"><h2>Composição</h2><div style="margin-top:12px">${barrasH(Object.entries(grupos).sort((a,b)=>b[1]-a[1]).map(([nome,v])=>({nome,v,cls:'pos'})),{total:tp.ativos})}</div></section>
   </div>
+  ${htmlPatAnoAno()}
   <section class="painel"><h2>Dívidas e obrigações</h2><div class="sub">Financiamentos, empréstimos e outras obrigações. Faturas de cartão são calculadas automaticamente e não precisam ser cadastradas aqui.</div>
     <div class="rolagem" style="margin-top:8px">${pa.length?`<table class="tabela"><tbody>${pa.map(linha).join('')}</tbody></table>`:'<div class="vazio">Nenhuma dívida cadastrada. Se o terreno ainda está sendo pago, cadastre o saldo devedor aqui.</div>'}</div></section>`;
 }
+
+/* =====================================================================
+   PATRIMÔNIO ANO A ANO — rentabilidade, valorização e depreciação
+   ===================================================================== */
+function mesesAte(isoFim){ const h=new Date(HOJE), f=new Date(isoFim); return Math.max(0,(f-h)/(864e5*30.4375)); }
+function htmlPatAnoAno(){
+  const at=S.pat.filter(p=>p.natureza==='ativo'); if(!at.length) return '';
+  const anoIni=+HOJE.slice(0,4), anos=[]; for(let a=anoIni;a<=Math.max(2030,anoIni);a++) anos.push(a);
+  const linhas=anos.map(a=>{
+    const m0 = a===anoIni?0:mesesAte(`${a-1}-12-31`), m1=mesesAte(`${a}-12-31`);
+    let ini=0,fim=0,rend=0,dep=0; const itens={};
+    at.forEach(p=>{ const {r,d}=taxasItem(p); const v0=valorItem(p,m0), semDep=v0*Math.pow(1+r/100,(m1-m0)/12), v1=valorItem(p,m1);
+      ini+=v0; fim+=v1; rend+=semDep-v0; dep+=semDep-v1; itens[p.id]={v0,v1,rend:semDep-v0,dep:semDep-v1}; });
+    return {a,ini,fim,rend,dep,itens,parcial:a===anoIni};
+  });
+  const tdItem=(p,l)=>{ const x=l.itens[p.id]; return `<td class="n" data-tip="${T(`<b>${esc(p.nome)} em ${l.a}</b><br>Início: ${fmt0(x.v0)}${x.rend>0.5?`<br>Rentabilidade/valorização: +${fmt0(x.rend)}`:''}${x.dep>0.5?`<br>Depreciação: −${fmt0(x.dep)}`:''}<br>Fim: ${fmt0(x.v1)}`)}">${fmt0(x.v1)}<div class="lanc-meta" style="justify-content:flex-end">${x.rend>0.5?`<span class="pos">+${fmtK(x.rend)}</span>`:''}${x.dep>0.5?`<span class="neg">−${fmtK(x.dep)}</span>`:''}</div></td>`; };
+  const serieFin=linhas.map(l=>soma(at.filter(ehFinanceiro),p=>l.itens[p.id].v1)), serieBens=linhas.map(l=>soma(at.filter(p=>!ehFinanceiro(p)),p=>l.itens[p.id].v1));
+  // realizado: variação entre avaliações registradas no histórico
+  const real={}; S.hist.filter(h=>h.natureza!=='passivo').forEach(h=>{ const a=h.data.slice(0,4), k=h.patrimonio_id||h.nome; ((real[a] ||= {})[k] ||= []).push(h); });
+  const anosReal=Object.keys(real).sort().filter(a=>Object.values(real[a]).some(v=>v.length>1));
+  return `<section class="painel">
+    <div class="cab-painel"><div><h2>Patrimônio ano a ano</h2><div class="sub">Cada bem evolui pela sua taxa: rentabilidade das aplicações, valorização de imóveis e terrenos, depreciação de veículos. Edite as taxas no lápis de cada item.</div></div></div>
+    <div class="legenda-g"><span><i style="background:#0F7A55"></i>Total de ativos</span><span><i style="background:#4A6FC2"></i>Aplicações e contas</span><span><i style="background:#C07A12"></i>Bens</span></div>
+    <div class="grafico">${svgLinhas(['Hoje',...linhas.map(l=>'Dez '+l.a)],[
+      {nome:'Total de ativos',cor:'#0F7A55',v:[soma(at),...linhas.map(l=>l.fim)]},
+      {nome:'Aplicações e contas',cor:'#4A6FC2',v:[soma(at.filter(ehFinanceiro)),...serieFin]},
+      {nome:'Bens',cor:'#C07A12',v:[soma(at.filter(p=>!ehFinanceiro(p))),...serieBens]}],{aria:'Evolução dos ativos ano a ano',w:1100,h:240})}</div>
+    <div class="rolagem" style="margin-top:12px"><table class="tabela"><thead><tr><th>Ano</th><th class="n">Valor no início</th><th class="n">Rentabilidade e valorização</th><th class="n">Depreciação</th><th class="n">Resultado</th><th class="n">Valor no fim</th></tr></thead><tbody>
+      ${linhas.map(l=>`<tr><td><b>${l.a}</b>${l.parcial?'<div class="lanc-meta">de hoje até 31/12</div>':''}</td><td class="n">${fmt0(l.ini)}</td><td class="n gap-pos">+${fmt0(l.rend)}</td><td class="n gap-neg">−${fmt0(l.dep)}</td><td class="n ${l.rend-l.dep>=0?'gap-pos':'gap-neg'}">${fmt0(l.rend-l.dep)} <span class="mudo" style="font-weight:400">(${pct((l.rend-l.dep)/Math.max(1,l.ini),1)})</span></td><td class="n valor">${fmt0(l.fim)}</td></tr>`).join('')}
+    </tbody><tfoot><tr><td>${anos[0]}–${anos[anos.length-1]}</td><td class="n">${fmt0(soma(at))}</td><td class="n">+${fmt0(soma(linhas,l=>l.rend))}</td><td class="n">−${fmt0(soma(linhas,l=>l.dep))}</td><td class="n">${fmt0(soma(linhas,l=>l.rend-l.dep))}</td><td class="n">${fmt0(linhas[linhas.length-1].fim)}</td></tr></tfoot></table></div>
+    <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600;font-size:14px;color:var(--floresta)">Ver bem a bem</summary>
+      <div class="rolagem" style="margin-top:8px"><table class="tabela"><thead><tr><th>Bem</th><th class="n">Taxa a.a.</th><th class="n">Hoje</th>${linhas.map(l=>`<th class="n">Dez ${l.a}</th>`).join('')}</tr></thead><tbody>
+      ${at.sort((a,b)=>b.valor-a.valor).map(p=>{ const t=taxasItem(p); return `<tr><td><b>${esc(p.nome)}</b><div class="lanc-meta">${esc(p.tipo)}</div></td><td class="n">${t.r?`<span class="pos">+${String(t.r).replace('.',',')}%</span>`:''}${t.d?` <span class="neg">−${String(t.d).replace('.',',')}%</span>`:''}${!t.r&&!t.d?'—':''}</td><td class="n">${fmt0(p.valor)}</td>${linhas.map(l=>tdItem(p,l)).join('')}</tr>`; }).join('')}
+      </tbody></table></div></details>
+    ${anosReal.length?`<p class="nota">Realizado pelas avaliações registradas: ${anosReal.map(a=>{ const v=Object.values(real[a]).filter(x=>x.length>1); const d=soma(v,x=>{x.sort((p,q)=>p.data.localeCompare(q.data)); return x[x.length-1].valor-x[0].valor;}); return `${a}: ${d>=0?'+':''}${fmt0(d)}`; }).join(' · ')}.</p>`:''}
+    <p class="nota">Projeção com juros compostos mês a mês a partir do valor atual. Aplicações sem taxa usam a rentabilidade das premissas (${String(S.cfg.premissas.rentab_aa).replace('.',',')}% a.a.). Não é garantia de rendimento nem de preço de venda.</p>
+  </section>`;
+}
+
 function editarBem(id,natureza){
   const p=S.pat.find(x=>x.id===id)||{nome:'',tipo:'',valor:'',natureza:natureza||'ativo'}; const tipos=p.natureza==='passivo'?TIPOS_PASSIVO:TIPOS_ATIVO;
   abrirModal(`<h2>${id?'Atualizar':'Adicionar'} ${p.natureza==='passivo'?'dívida':'ativo'}</h2><div class="linha-campos" style="margin-top:12px">
@@ -1357,13 +1407,13 @@ function editarBem(id,natureza){
    <div class="campo"><label for="bValor">${p.natureza==='passivo'?'Saldo devedor':'Valor atual'} (R$)</label><input type="number" id="bValor" value="${p.valor}"></div>
    <div class="campo"><label for="bInst">Instituição</label><input type="text" id="bInst" value="${esc(p.instituicao||'')}"></div>
    ${p.natureza==='passivo'?`<div class="campo"><label for="bParc">Parcelas restantes</label><input type="number" id="bParc" value="${p.parcelas_restantes??''}"></div><div class="campo"><label for="bVParc">Valor da parcela</label><input type="number" id="bVParc" value="${p.valor_parcela??''}"></div>`
-   :`<div class="campo"><label for="bLiq">Liquidez</label><select id="bLiq">${['','Diária','30 dias','90 dias','No vencimento','Baixa (bem)'].map(o=>`<option ${o===(p.liquidez||'')?'selected':''}>${o}</option>`).join('')}</select></div><div class="campo"><label for="bRent">Rentabilidade (% a.a.)</label><input type="number" step="0.1" id="bRent" value="${p.rentab_aa??''}"></div>
+   :`<div class="campo"><label for="bLiq">Liquidez</label><select id="bLiq">${['','Diária','30 dias','90 dias','No vencimento','Baixa (bem)'].map(o=>`<option ${o===(p.liquidez||'')?'selected':''}>${o}</option>`).join('')}</select></div><div class="campo"><label for="bRent">Rentabilidade ou valorização (% a.a.)</label><input type="number" step="0.1" id="bRent" value="${p.rentab_aa??''}"><span class="dica">Aplicações: rendimento. Imóveis e terrenos: valorização.</span></div><div class="campo"><label for="bDep">Depreciação (% a.a.)</label><input type="number" step="0.1" min="0" max="99" id="bDep" value="${p.deprec_aa??''}"><span class="dica">Veículos sem valor usam 10%.</span></div>
      <div class="campo"><label for="bVenc">Vencimento</label><input type="date" id="bVenc" value="${p.vencimento||''}"></div><div class="campo"><label for="bAporte">Aporte mensal</label><input type="number" id="bAporte" value="${p.aporte_mensal??''}"></div>`}
   </div><div class="botoes"><button class="btn sec" onclick="fecharModal()">Cancelar</button><button class="btn" id="bOk">Salvar</button></div>`);
   document.getElementById('bOk').onclick=async()=>{
     const g=x=>document.getElementById(x); const num=x=>g(x)&&g(x).value!==''?parseFloat(g(x).value):null;
     const r={nome:g('bNome').value.trim(),tipo:g('bTipo').value,valor:num('bValor'),atualizado_em:new Date().toISOString()};
-    if(S.novasTabelas) Object.assign(r,{natureza:p.natureza,instituicao:g('bInst').value.trim()||null,parcelas_restantes:num('bParc'),valor_parcela:num('bVParc'),liquidez:g('bLiq')?.value||null,rentab_aa:num('bRent'),vencimento:g('bVenc')?.value||null,aporte_mensal:num('bAporte')});
+    if(S.novasTabelas) Object.assign(r,{natureza:p.natureza,instituicao:g('bInst').value.trim()||null,parcelas_restantes:num('bParc'),valor_parcela:num('bVParc'),liquidez:g('bLiq')?.value||null,rentab_aa:num('bRent'),deprec_aa:num('bDep'),vencimento:g('bVenc')?.value||null,aporte_mensal:num('bAporte')});
     if(!r.nome||!(r.valor>0)) return avisar('Informe nome e valor maior que zero.');
     const q= id? sb.from('patrimonio').update(r).eq('id',id).select() : sb.from('patrimonio').insert(r).select();
     const {data,error}=await q; if(error) return erroBanco(error);
