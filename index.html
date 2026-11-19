@@ -318,7 +318,7 @@ const uid = () => crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-
 const soma = (arr,f=x=>x.valor) => arr.reduce((s,x)=>s+f(x),0);
 const norm = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 
-function avisar(msg){ const a=document.getElementById('aviso'); a.textContent=msg; a.classList.add('on'); clearTimeout(avisar.t); avisar.t=setTimeout(()=>a.classList.remove('on'),3200); }
+function avisar(msg, gravou=!/^(Não foi possível|Informe|Preencha|Digite|Escolha|Use |Valor|Descrição|Essa categoria|Aplique|Nada novo)/.test(msg)){ if(gravou && usuario) sincronizar(400); const a=document.getElementById('aviso'); a.textContent=msg; a.classList.add('on'); clearTimeout(avisar.t); avisar.t=setTimeout(()=>a.classList.remove('on'),3200); }
 function erroBanco(e, acao='salvar'){ console.error(e); avisar(`Não foi possível ${acao}: ${e?.message||'verifique a conexão'}.`); }
 
 const ICO = {
@@ -385,10 +385,13 @@ const lancDe = r => ({ id:r.id, data:r.data, categoria:r.categoria, descricao:r.
   recorrente: r.recorrente_total>1 ? {n:r.recorrente_n,total:r.recorrente_total,grupo:r.recorrente_grupo} : null });
 
 async function carregar(){
+  if(await buscarDados()){ ir(vistaAtual); iniciarTempoReal(); }
+}
+async function buscarDados(){
   const q = t => sb.from(t).select('*');
   const [cats,lans,ents,pats,buds] = await Promise.all([sb.from('categorias').select('nome').order('nome'), q('lancamentos'), q('entradas'), q('patrimonio'), q('budgets')]);
   const err = cats.error||lans.error||ents.error||pats.error||buds.error;
-  if(err){ document.getElementById('conteudo').innerHTML=`<div class="painel vazio">Não foi possível carregar os dados (${esc(err.message)}). Recarregue a página.</div>`; return; }
+  if(err){ if(!S.lanc.length) document.getElementById('conteudo').innerHTML=`<div class="painel vazio">Não foi possível carregar os dados (${esc(err.message)}). Recarregue a página.</div>`; return false; }
   S.cats = cats.data.map(c=>c.nome);
   S.lanc = lans.data.map(lancDe);
   S.ent  = ents.data.map(e=>({id:e.id,data:e.data,descricao:e.descricao,valor:Number(e.valor),quem:e.quem||'',recorrente:!!e.recorrente,categoria:e.categoria||null}));
@@ -405,7 +408,35 @@ async function carregar(){
   if(!S.cfg.marco_zero) S.cfg.marco_zero = {data:'2026-11-19'};
   S.cfg.premissas = {...DEFAULT_PREMISSAS, ...(S.cfg.premissas||{})};
   document.getElementById('marcoMenu').textContent = 'Marco Zero em '+dataBR(corte());
-  ir(vistaAtual);
+  return true;
+}
+
+/* =====================================================================
+   ATUALIZAÇÃO AUTOMÁTICA — tempo real, ao voltar para a aba e após salvar
+   ===================================================================== */
+let syncTimer=null, syncPendente=false, canal=null;
+function sincronizar(atraso=500){
+  clearTimeout(syncTimer);
+  syncTimer=setTimeout(async()=>{
+    if(!usuario) return;
+    if(document.getElementById('modal').classList.contains('aberto')){ syncPendente=true; return; }
+    const ok=await buscarDados(); if(ok) redesenhar();
+  },atraso);
+}
+function redesenhar(){
+  const ativo=document.activeElement, id=ativo&&ativo.id, sel=ativo&&ativo.selectionStart, y=window.scrollY;
+  const det=[...document.querySelectorAll('#conteudo details')].map(d=>d.open);
+  ir(vistaAtual,true);
+  document.querySelectorAll('#conteudo details').forEach((d,i)=>{ if(det[i]) d.open=true; });
+  window.scrollTo(0,y);
+  if(id){ const n=document.getElementById(id); if(n){ n.focus({preventScroll:true}); try{ if(sel!=null) n.setSelectionRange(sel,sel); }catch(e){} } }
+}
+function iniciarTempoReal(){
+  if(canal) return;
+  canal = sb.channel('familia-dados').on('postgres_changes',{event:'*',schema:'public'},()=>sincronizar(800)).subscribe();
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') sincronizar(100); });
+  window.addEventListener('focus',()=>sincronizar(100));
+  setInterval(()=>{ if(document.visibilityState==='visible') sincronizar(0); }, 60000);
 }
 
 /* =====================================================================
@@ -495,14 +526,14 @@ function abrirMais(){
 }
 document.addEventListener('click',e=>{ const f=document.getElementById('folhaMais'); if(f.classList.contains('aberta') && !f.contains(e.target) && !e.target.closest('[data-v="mais"]')) f.classList.remove('aberta'); });
 
-function ir(v){
-  vistaAtual=v;
+function ir(v, manter=false){
+  const mesma = v===vistaAtual; vistaAtual=v;
   document.querySelectorAll('[data-v]').forEach(b=>{ if(b.dataset.v===v) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); });
   const c=document.getElementById('conteudo');
   const R = {visao:vVisao,lanc:vLanc,cartoes:vCartoes,plan:vPlan,vaz:vVaz,pat:vPat,inv:vInv,orient:vOrient,rel:vRel,conf:vConf}[v];
   c.innerHTML = (S.novasTabelas? '' : `<div class="diag-item alerta" style="margin-bottom:16px">${ico('alerta')}<div>A atualização do banco (Marco Zero, cartões, metas e histórico) ainda não foi aplicada. Os dados existentes aparecem normalmente; salvar cartões, metas e premissas só funciona depois dela.</div></div>`) + R();
   if(R.depois) R.depois();
-  window.scrollTo(0,0);
+  if(!manter && !mesma) window.scrollTo(0,0);
 }
 const topo = (t,s,extra='') => `<div class="topo"><div><h1>${t}</h1>${s?`<p>${s}</p>`:''}</div>${extra}</div>`;
 
@@ -807,7 +838,7 @@ async function salvarLanc(){
   gravar();
 }
 function abrirModal(html){ const c=document.getElementById('modalCaixa'); c.innerHTML=html; c.scrollTop=0; document.getElementById('modal').classList.add('aberto'); setTimeout(()=>{ const i=c.querySelector('input,select'); if(i) i.focus({preventScroll:true}); else { c.setAttribute('tabindex','-1'); c.focus({preventScroll:true}); } c.scrollTop=0; },30); }
-function fecharModal(){ document.getElementById('modal').classList.remove('aberto'); document.getElementById('modalCaixa').style.maxWidth=''; }
+function fecharModal(){ document.getElementById('modal').classList.remove('aberto'); if(syncPendente){ syncPendente=false; sincronizar(50); } document.getElementById('modalCaixa').style.maxWidth=''; }
 document.getElementById('modal').addEventListener('click',e=>{ if(e.target.id==='modal') fecharModal(); });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') fecharModal(); });
 
@@ -821,7 +852,7 @@ function abrirEdicao(id){
     <div class="campo"><label for="eEss">Natureza</label><select id="eEss"><option value="" ${l.essencial==null?'selected':''}>Pela categoria</option><option value="1" ${l.essencial===true?'selected':''}>Essencial</option><option value="0" ${l.essencial===false?'selected':''}>Não essencial</option></select></div>
     <div class="campo" style="grid-column:1/-1"><label for="eDesc">Descrição</label><input type="text" id="eDesc" value="${esc(l.descricao)}"></div>
   </div>
-  ${g?`<label style="display:flex;gap:8px;margin-top:14px;font-size:14px"><input type="checkbox" id="eSerie"> Aplicar categoria, descrição e natureza a toda a série</label>`:''}
+  ${g?`<label style="display:flex;gap:8px;margin-top:14px;font-size:14px"><input type="checkbox" id="eSerie"> Aplicar categoria, descrição, natureza e valor a este e aos próximos da série</label>`:''}
   <div class="botoes"><button class="btn sec" onclick="fecharModal()">Cancelar</button><button class="btn" id="eSalvar">Salvar alterações</button></div>`);
   document.getElementById('eSalvar').onclick=async()=>{
     const ev=document.getElementById('eEss').value; const ess= ev===''?null:ev==='1';
@@ -831,8 +862,9 @@ function abrirEdicao(id){
     const v=parseFloat(document.getElementById('eVal').value), d=document.getElementById('eData').value;
     if(!(v>0)||!d) return avisar('Valor e data são obrigatórios.');
     let r1 = await sb.from('lancamentos').update({...comum, valor:v, data:d}).eq('id',id); if(r1.error) return erroBanco(r1.error);
-    if(serie){ const col=l.parcela?'parcela_grupo':'recorrente_grupo'; const r2=await sb.from('lancamentos').update(comum).eq(col,g); if(r2.error) return erroBanco(r2.error);
-      S.lanc.filter(x=>(x.parcela?.grupo||x.recorrente?.grupo)===g).forEach(x=>Object.assign(x,comum)); }
+    if(serie){ const col=l.parcela?'parcela_grupo':'recorrente_grupo'; let r2=await sb.from('lancamentos').update(comum).eq(col,g); if(r2.error) return erroBanco(r2.error);
+      r2=await sb.from('lancamentos').update({valor:v}).eq(col,g).gte('data',l.data); if(r2.error) return erroBanco(r2.error);
+      S.lanc.filter(x=>(x.parcela?.grupo||x.recorrente?.grupo)===g).forEach(x=>{ Object.assign(x,comum); if(x.data>=l.data) x.valor=v; }); }
     Object.assign(l,comum,{valor:v,data:d}); fecharModal(); avisar(serie?'Série atualizada':'Lançamento atualizado'); ir(vistaAtual);
   };
 }
@@ -1015,7 +1047,8 @@ function vPlan(){
   const linhas=cats.map(c=>{ const o=orc[c]||0, r=real[c]||0, d=r-o, p=o?r/o:null;
     return `<tr class="clicavel" data-drill="${T(JSON.stringify({k,cat:c}))}" tabindex="0"><td><b>${esc(c)}</b>${p!=null&&p>=.7?` <span class="etiqueta ${nivel(p)}">${p>=1?'Estourou':p>=.9?'90% usado':'70% usado'}</span>`:''}</td><td class="n">${o?fmt(o):'—'}</td><td class="n">${fmt(r)}</td><td class="n ${d>0?'neg':'pos'}">${o?fmt(d):'—'}</td><td class="n esconde-m">${p!=null?pct(p):'—'}</td></tr>`; }).join('');
   const P=S.cfg.premissas;
-  vPlan.depois=()=>{ ligarTips(document.getElementById('conteudo')); document.querySelectorAll('[data-prem]').forEach(i=>i.onchange=()=>{ P[i.dataset.prem]= i.value===''?null:parseFloat(i.value); document.getElementById('projecao').innerHTML=htmlProjecao(); ligarTips(document.getElementById('projecao')); }); };
+  vPlan.depois=()=>{ ligarTips(document.getElementById('conteudo')); document.querySelectorAll('[data-prem]').forEach(i=>{ i.id ||= 'prem-'+i.dataset.prem; i.oninput=()=>{ P[i.dataset.prem]= i.value===''?null:parseFloat(i.value);
+    clearTimeout(vPlan.t); vPlan.t=setTimeout(()=>{ redesenhar(); clearTimeout(vPlan.s); vPlan.s=setTimeout(()=>{ if(S.novasTabelas) sb.from('config').upsert({chave:'premissas',valor:P,atualizado_em:new Date().toISOString()}); },800); },350); }; }); };
   return topo('Planejamento','Gap mês a mês, plano até 2030, orçamento por categoria e projeção de longo prazo.') + htmlGap() + htmlHorizonte() + `
   <section class="painel">
     <div class="cab-painel"><div><h2>Planejado versus realizado</h2><div class="sub">Alertas em 70%, 90% e 100% do orçamento · despesas desde o Marco Zero${fatorMZ<1&&fatorMZ>0?` · orçamento proporcional aos ${diasNoMes(k)-(+corte().slice(8))+1} dias após o corte`:''}</div></div>
@@ -1035,7 +1068,7 @@ function vPlan(){
       <div class="campo"><label>Rentabilidade (% a.a.)</label><input type="number" step="0.1" data-prem="rentab_aa" value="${P.rentab_aa}"></div>
     </div>
     <div id="projecao">${htmlProjecao()}</div>
-    <div style="margin-top:12px"><button class="btn sec pequeno" onclick="salvarConfig('premissas',S.cfg.premissas,'Premissas salvas')">Salvar premissas</button></div>
+    <div style="margin-top:12px"><span class="nota" style="margin:0">As premissas são salvas automaticamente e todos os gráficos se atualizam ao digitar.</span></div>
   </section>`;
 }
 function projetar(ajuste){
