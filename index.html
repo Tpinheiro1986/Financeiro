@@ -155,6 +155,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--floresta-3);outline:2
 .tabela tr.arquivo td{color:var(--nevoa)}
 .tabela tr.novo td{background:#E5F3EB}
 .tabela tr.novo td:first-child{box-shadow:inset 3px 0 0 var(--pos)}
+.clicavel{cursor:pointer;border-radius:8px}
+.barra.clicavel:hover .t b,.tabela tr.clicavel:hover td{color:var(--floresta);text-decoration:underline;text-underline-offset:3px}
+.tabela tr.clicavel:hover td{background:var(--linha-2)}
+.gap-pos{color:var(--pos);font-weight:700}.gap-neg{color:var(--neg);font-weight:700}
+.tabela tfoot td{font-weight:700;border-top:2px solid var(--tinta)}
 .sub-lista{font-size:13.5px;font-weight:700;color:var(--tinta-2);margin:18px 0 4px;display:flex;justify-content:space-between}
 .rolagem{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .lanc-desc{font-weight:600}
@@ -281,7 +286,8 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const S = { cats:[], lanc:[], ent:[], pat:[], hist:[], bud:{}, cartoes:[], metas:[], cfg:{}, novasTabelas:true };
 let usuario = null, vistaAtual = 'visao';
 const NOVOS = new Set();
-const UI = { mesLanc:null, buscaLanc:'', arquivo:false, tipoLanc:'gasto', forma:'Débito', mesFat:null, cartaoSel:null,
+const chaveCat = s => norm(s).replace(/[^a-z0-9]/g,'');
+const UI = { mesLanc:null, buscaLanc:'', catLanc:'', arquivo:false, tipoLanc:'gasto', forma:'Débito', mesFat:null, cartaoSel:null,
              mesOrc:null, horizonte:60, janelaVaz:'90', anoRel:null };
 
 const DEFAULT_PREMISSAS = { inflacao_aa:4.5, cresc_renda_aa:5, rentab_aa:10.5, gasto_variavel_mensal:3500, renda_mensal:null, despesas_fixas_mensal:null };
@@ -561,7 +567,7 @@ function svgLinhas(labels, series, opts={}){
 function barrasH(itens, opts={}){
   if(!itens.length) return `<div class="vazio">${opts.vazio||'Sem dados no período.'}</div>`;
   const mx=Math.max(...itens.map(i=>Math.max(i.v,i.orc||0)));
-  return `<div class="barras">${itens.map(i=>`<div class="barra" data-tip="${T(`<b>${esc(i.nome)}</b><br>${fmt(i.v)}${i.orc?`<br>Orçamento: ${fmt(i.orc)} (${pct(i.v/i.orc)})`:''}${i.extra?'<br>'+i.extra:''}`)}">
+  return `<div class="barras">${itens.map(i=>`<div class="barra ${opts.drill?'clicavel':''}" ${opts.drill?`role="button" tabindex="0" data-drill="${T(JSON.stringify({...opts.drill,cat:i.nome}))}"`:''} data-tip="${T(`<b>${esc(i.nome)}</b><br>${fmt(i.v)}${i.orc?`<br>Orçamento: ${fmt(i.orc)} (${pct(i.v/i.orc)})`:''}${i.extra?'<br>'+i.extra:''}${opts.drill?'<br><i>Clique para ver os lançamentos</i>':''}`)}">
     <div class="t"><b>${esc(i.nome)}</b><span>${fmt(i.v)}${opts.total?` <span class="mudo">· ${pct(i.v/opts.total)}</span>`:''}</span></div>
     <div class="trilho"><i class="${i.cls||''}" style="width:${(i.v/mx*100).toFixed(1)}%"></i>${i.orc?`<span class="marca-orc" style="left:${(i.orc/mx*100).toFixed(1)}%"></span>`:''}</div></div>`).join('')}</div>`;
 }
@@ -647,7 +653,7 @@ function vVisao(){
       </div>
     </div>
     <div class="fluxo">
-      <h2>Os próximos 12 meses no caixa</h2>
+      <h2 style="display:flex;justify-content:space-between;gap:10px">Os próximos 12 meses no caixa <button class="btn link" style="color:var(--menta);font-size:13px" onclick="ir('plan')">Ver gap mês a mês</button></h2>
       <div class="legenda"><span><i style="background:#9CC9B1"></i>Entradas</span><span><i style="background:#F0A496"></i>Saídas já contratadas</span><span><i style="background:repeating-linear-gradient(45deg,#F0A496 0 2px,transparent 2px 5px);border:1px solid #F0A496"></i>Gastos variáveis estimados</span><span><i style="background:repeating-linear-gradient(45deg,#9CC9B1 0 2px,transparent 2px 5px);border:1px solid #9CC9B1"></i>Renda estimada</span></div>
       ${svgFluxo(meses)}
     </div>
@@ -678,7 +684,7 @@ function vVisao(){
     </section>
   </div>
   <div class="grade g2" style="margin-top:18px">
-    <section class="painel"><div class="cab-painel"><div><h2>Despesas por categoria</h2><div class="sub">${nomeYM(k)} · a linha marca o orçamento</div></div></div>${barrasH(itensCat,{total:des,vazio:'Nenhuma despesa registrada neste mês após o Marco Zero.'})}</section>
+    <section class="painel"><div class="cab-painel"><div><h2>Despesas por categoria</h2><div class="sub">${nomeYM(k)} · a linha marca o orçamento</div></div></div>${barrasH(itensCat,{total:des,vazio:'Nenhuma despesa registrada neste mês após o Marco Zero.',drill:{k}})}</section>
     <section class="painel"><div class="cab-painel"><div><h2>Evolução patrimonial</h2><div class="sub">Pelas avaliações registradas em Patrimônio</div></div></div>
       ${datas.length>=2? `<div class="grafico">${svgLinhas(datas.map(dataBR),[{nome:'Patrimônio',v:evol,cor:'#0F7A55'}],{aria:'Evolução do patrimônio'})}</div>` : `<div class="vazio">${datas.length?'Uma avaliação registrada (Marco Zero). A linha aparece a partir da segunda atualização de valores.':'Atualize os valores em Patrimônio para começar o histórico.'}</div>`}
     </section>
@@ -695,6 +701,7 @@ function vLanc(){
   UI.mesLanc ||= ym(HOJE);
   const k=UI.mesLanc; const b=norm(UI.buscaLanc);
   let lista = [...S.lanc.map(l=>({...l,_t:'g'})), ...S.ent.map(e=>({...e,_t:'r'}))];
+  if(UI.catLanc) lista = lista.filter(l=>l._t==='g' && l.categoria===UI.catLanc);
   lista = b ? lista.filter(l=>norm(l.descricao+' '+(l.categoria||'')+' '+(l.quem||'')+' '+String(l.valor).replace('.',',')).includes(b)) : lista.filter(l=>ym(l.data)===k);
   if(!UI.arquivo) lista=lista.filter(l=>l.data>=corte());
   lista.sort((a,c)=>(NOVOS.has(c.id)-NOVOS.has(a.id))||c.data.localeCompare(a.data)||(c.criado_em||'').localeCompare(a.criado_em||''));
@@ -736,7 +743,7 @@ function vLanc(){
   <section class="painel">
     <div class="cab-painel">
       <div class="nav-periodo"><button type="button" aria-label="Mês anterior" onclick="UI.mesLanc=addYM(UI.mesLanc,-1);ir('lanc')">‹</button><strong>${b?'Resultado da busca':nomeYM(k)}</strong><button type="button" aria-label="Próximo mês" onclick="UI.mesLanc=addYM(UI.mesLanc,1);ir('lanc')">›</button></div>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><input type="search" id="busca" placeholder="Buscar descrição, categoria, valor" value="${esc(UI.buscaLanc)}" style="width:260px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><select id="filtroCat" aria-label="Filtrar por categoria" style="width:200px" onchange="UI.catLanc=this.value;ir('lanc')"><option value="">Todas as categorias</option>${S.cats.map(c=>`<option ${c===UI.catLanc?'selected':''}>${esc(c)}</option>`).join('')}</select><input type="search" id="busca" placeholder="Buscar descrição, categoria, valor" value="${esc(UI.buscaLanc)}" style="width:260px">
       <label style="font-size:13.5px;display:flex;gap:6px;align-items:center"><input type="checkbox" ${UI.arquivo?'checked':''} onchange="UI.arquivo=this.checked;ir('lanc')"> Mostrar histórico anterior ao Marco Zero</label></div>
     </div>
     <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:14px;margin-bottom:8px"><span>Despesas: <b class="neg">${fmt(tg)}</b></span><span>Receitas: <b class="pos">${fmt(tr)}</b></span><span>${lista.length} lançamentos</span></div>
@@ -776,7 +783,9 @@ async function salvarLanc(){
     const l={...base,id:uid(),data:addMeses(data,i),valor:v,parcela_n:parc>1?i+1:null,parcela_total:parc>1?parc:null,parcela_grupo:g,criado_em:agora};
     if(UI.forma==='Crédito'){ const c=cartaoDe(cartao); const k0=ym(data), dia=+data.slice(8,10); l.fatura_venc=diaNoMes(addYM(k0,(dia>c.dia_fechamento?2:1)+i),c.dia_vencimento); }
     linhas.push(l);} }
-  const dup=S.lanc.find(l=>l.data===linhas[0].data && l.categoria===cat && Math.abs(l.valor-linhas[0].valor)<0.005);
+  const dDesc=chaveCat(desc), dia=linhas[0].data;
+  const dup=S.lanc.find(l=>l.data===dia && Math.abs(l.valor-linhas[0].valor)<0.005)
+         || (dDesc.length>=3 && S.lanc.find(l=>Math.abs((new Date(l.data)-new Date(dia))/864e5)<=1 && chaveCat(l.descricao)===dDesc && Math.abs(l.valor-linhas[0].valor)<=Math.max(5,linhas[0].valor*0.15)));
   const gravar=async()=>{
     const ins = S.novasTabelas? linhas : linhas.map(({cartao,fatura_venc,origem,essencial,observacao,...r})=>r);
     const btn=document.getElementById('btnSalvarLanc'); if(btn) btn.disabled=true;
@@ -784,11 +793,11 @@ async function salvarLanc(){
     if(error) return erroBanco(error);
     S.lanc.push(...ins.map(lancDe)); NOVOS.add(ins[0].id); UI.mesLanc=ym(ins[0].data); UI.buscaLanc=''; fecharModal(); avisar(rep>1?`Despesa lançada por ${rep} meses`:parc>1?`Lançada em ${parc}x de ${fmt(linhas[0].valor)}`:'Despesa lançada'); ir('lanc');
   };
-  if(dup){ abrirModal(`<h2>Pode ser um lançamento repetido</h2><p>Já existe ${fmt(dup.valor)} em ${esc(dup.categoria)} no dia ${dataBR(dup.data)}${dup.descricao?` (${esc(dup.descricao)})`:''}. Deseja lançar mesmo assim?</p>
+  if(dup){ abrirModal(`<h2>Pode ser um lançamento repetido</h2><p>Já existe <b>${esc(dup.descricao||dup.categoria)}</b> de ${fmt(dup.valor)} em ${esc(dup.categoria)} no dia ${dataBR(dup.data)}. Você está lançando ${fmt(linhas[0].valor)} em ${esc(cat)} no dia ${dataBR(dia)}. Deseja lançar mesmo assim?</p>
     <div class="botoes"><button class="btn sec" onclick="fecharModal()">Não lançar</button><button class="btn" id="mConf">Lançar mesmo assim</button></div>`); document.getElementById('mConf').onclick=gravar; return; }
   gravar();
 }
-function abrirModal(html){ document.getElementById('modalCaixa').innerHTML=html; document.getElementById('modal').classList.add('aberto'); setTimeout(()=>document.querySelector('#modalCaixa input,#modalCaixa button')?.focus(),30); }
+function abrirModal(html){ const c=document.getElementById('modalCaixa'); c.innerHTML=html; c.scrollTop=0; document.getElementById('modal').classList.add('aberto'); setTimeout(()=>{ const i=c.querySelector('input,select'); if(i) i.focus({preventScroll:true}); else { c.setAttribute('tabindex','-1'); c.focus({preventScroll:true}); } c.scrollTop=0; },30); }
 function fecharModal(){ document.getElementById('modal').classList.remove('aberto'); }
 document.getElementById('modal').addEventListener('click',e=>{ if(e.target.id==='modal') fecharModal(); });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') fecharModal(); });
@@ -924,7 +933,7 @@ function vCartoes(){
     <div>
       <section class="painel"><h2>Próximas faturas</h2><div class="sub" style="margin-bottom:12px">O que já está comprometido, por vencimento</div>
         <div class="barras">${fut.filter(f=>f.v>0).map(f=>`<div class="barra" data-tip="${T(`<b>${nomeYM(f.k)}</b><br>${fmt(f.v)}`)}"><div class="t"><b style="text-transform:capitalize">${MESES[+f.k.slice(5)-1]} ${f.k.slice(0,4)}</b><span>${fmt(f.v)}</span></div><div class="trilho"><i class="info" style="width:${f.v/mxF*100}%"></i></div></div>`).join('')||'<div class="vazio">Nada comprometido.</div>'}</div></section>
-      <section class="painel"><h2>Por categoria nesta fatura</h2><div style="margin-top:12px">${barrasH(Object.entries(porCat).sort((a,b)=>b[1]-a[1]).map(([nome,v])=>({nome,v})),{total:tot})}</div></section>
+      <section class="painel"><h2>Por categoria nesta fatura</h2><div style="margin-top:12px">${barrasH(Object.entries(porCat).sort((a,b)=>b[1]-a[1]).map(([nome,v])=>({nome,v})),{total:tot,drill:{fat:UI.mesFat,cartao:UI.cartaoSel}})}</div></section>
     </div>
   </div>`;
 }
@@ -958,10 +967,10 @@ function vPlan(){
   const frac = k===ym(HOJE) ? Math.max(1,(+HOJE.slice(8))-ini+1)/(diasNoMes(k)-ini+1) : 1;
   const nivel = r => r>=1?'neg':r>=.9?'neg':r>=.7?'alerta':'pos';
   const linhas=cats.map(c=>{ const o=orc[c]||0, r=real[c]||0, d=r-o, p=o?r/o:null;
-    return `<tr><td><b>${esc(c)}</b>${p!=null&&p>=.7?` <span class="etiqueta ${nivel(p)}">${p>=1?'Estourou':p>=.9?'90% usado':'70% usado'}</span>`:''}</td><td class="n">${o?fmt(o):'—'}</td><td class="n">${fmt(r)}</td><td class="n ${d>0?'neg':'pos'}">${o?fmt(d):'—'}</td><td class="n esconde-m">${p!=null?pct(p):'—'}</td></tr>`; }).join('');
+    return `<tr class="clicavel" data-drill="${T(JSON.stringify({k,cat:c}))}" tabindex="0"><td><b>${esc(c)}</b>${p!=null&&p>=.7?` <span class="etiqueta ${nivel(p)}">${p>=1?'Estourou':p>=.9?'90% usado':'70% usado'}</span>`:''}</td><td class="n">${o?fmt(o):'—'}</td><td class="n">${fmt(r)}</td><td class="n ${d>0?'neg':'pos'}">${o?fmt(d):'—'}</td><td class="n esconde-m">${p!=null?pct(p):'—'}</td></tr>`; }).join('');
   const P=S.cfg.premissas;
   vPlan.depois=()=>{ ligarTips(document.getElementById('conteudo')); document.querySelectorAll('[data-prem]').forEach(i=>i.onchange=()=>{ P[i.dataset.prem]= i.value===''?null:parseFloat(i.value); document.getElementById('projecao').innerHTML=htmlProjecao(); ligarTips(document.getElementById('projecao')); }); };
-  return topo('Planejamento','Orçamento mensal por categoria e projeção de longo prazo.') + `
+  return topo('Planejamento','Gap mês a mês, orçamento por categoria e projeção de longo prazo.') + htmlGap() + `
   <section class="painel">
     <div class="cab-painel"><div><h2>Planejado versus realizado</h2><div class="sub">Alertas em 70%, 90% e 100% do orçamento · despesas desde o Marco Zero${fatorMZ<1&&fatorMZ>0?` · orçamento proporcional aos ${diasNoMes(k)-(+corte().slice(8))+1} dias após o corte`:''}</div></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><div class="nav-periodo"><button type="button" aria-label="Mês anterior" onclick="UI.mesOrc=addYM(UI.mesOrc,-1);ir('plan')">‹</button><strong>${nomeYM(k)}</strong><button type="button" aria-label="Próximo mês" onclick="UI.mesOrc=addYM(UI.mesOrc,1);ir('plan')">›</button></div><button class="btn sec pequeno" onclick="editarOrcamento('${ano}')">Editar orçamento ${ano}</button></div></div>
@@ -1024,6 +1033,109 @@ function editarOrcamento(ano){
 }
 async function salvarConfig(chave,valor,msg){ const {error}=await sb.from('config').upsert({chave,valor,atualizado_em:new Date().toISOString()}); if(error) return erroBanco(error); S.cfg[chave]=valor; if(msg) avisar(msg); }
 
+
+/* =====================================================================
+   DETALHE POR CATEGORIA (clique em barras, linhas e vazamentos)
+   ===================================================================== */
+document.addEventListener('click',e=>{ const d=e.target.closest('[data-drill]'); if(d) abrirCategoria(JSON.parse(decodeURIComponent(d.dataset.drill))); });
+document.addEventListener('keydown',e=>{ if(e.key==='Enter'){ const d=e.target.closest&&e.target.closest('[data-drill]'); if(d) abrirCategoria(JSON.parse(decodeURIComponent(d.dataset.drill))); } });
+function abrirCategoria(f){
+  esconderTip();
+  let lista=S.lanc.filter(l=>l.categoria===f.cat), titulo='';
+  if(f.k){ lista=lista.filter(l=>ym(l.data)===f.k && pos(l)); titulo=nomeYM(f.k)+(f.k===ym(corte())?' · desde o Marco Zero':''); }
+  else if(f.fat){ lista=lista.filter(l=>l.forma==='Crédito' && ym(faturaVenc(l))===f.fat && (f.cartao==='Sem cartão definido'? !l.cartao : l.cartao===f.cartao)); titulo='Fatura de '+nomeYM(f.fat); }
+  else if(f.ano){ lista=lista.filter(l=>l.data.slice(0,4)===f.ano && l.data<=HOJE); titulo='Ano de '+f.ano; }
+  else if(f.desde){ lista=lista.filter(l=>l.data>f.desde && l.data<=HOJE); titulo='Desde '+dataBR(f.desde); }
+  lista.sort((a,b)=>b.data.localeCompare(a.data));
+  const ano=(f.k||f.fat||HOJE).slice(0,4), orc=(S.bud[ano]||{})[f.cat];
+  abrirModal(`<h2>${esc(f.cat)}</h2><p class="mudo" style="font-size:14px">${titulo} · ${lista.length} lançamentos · <b style="color:var(--tinta)">${fmt(soma(lista))}</b>${orc&&f.k?` de ${fmt(orc)} orçados`:''}</p>
+   ${lista.length?`<div class="rolagem" style="max-height:55vh;margin-top:12px"><table class="tabela"><tbody>${lista.map(l=>`<tr><td>${dataBR(l.data)}</td><td><div class="lanc-desc">${esc(l.descricao||l.categoria)}</div><div class="lanc-meta">${esc(l.forma)}${l.parcela?` <span class="etiqueta info">${l.parcela.n}/${l.parcela.total}</span>`:''}${l.quem?' · '+esc(l.quem):''}</div></td><td class="n valor">${fmt(l.valor)}</td><td><div class="acoes"><button class="icone-btn" aria-label="Editar" onclick="fecharModal();abrirEdicao('${l.id}')">${ico('editar')}</button><button class="icone-btn" aria-label="Excluir" onclick="fecharModal();pedirExclusao('${l.id}')">${ico('lixo')}</button></div></td></tr>`).join('')}</tbody></table></div>`:'<div class="vazio">Nenhum lançamento.</div>'}
+   <div class="botoes"><button class="btn sec" onclick="fecharModal()">Fechar</button><button class="btn" onclick="fecharModal();UI.catLanc='${esc(f.cat)}';UI.buscaLanc='';${f.k?`UI.mesLanc='${f.k}';`:''}ir('lanc')">Abrir em Lançamentos</button></div>`);
+}
+function juntarCategorias(){
+  const op=S.cats.map(c=>`<option>${esc(c)}</option>`).join('');
+  abrirModal(`<h2>Juntar categorias</h2><p style="font-size:14px">Todos os lançamentos da primeira passam para a segunda, e a primeira é removida. O orçamento das duas é somado.</p>
+   <div class="linha-campos" style="margin-top:14px"><div class="campo"><label for="jDe">Juntar esta</label><select id="jDe">${op}</select></div><div class="campo"><label for="jPara">Dentro desta</label><select id="jPara">${op}</select></div></div>
+   <div class="botoes"><button class="btn sec" onclick="fecharModal()">Cancelar</button><button class="btn" id="jOk">Juntar</button></div>`);
+  document.getElementById('jOk').onclick=async()=>{
+    const de=document.getElementById('jDe').value, para=document.getElementById('jPara').value;
+    if(de===para) return avisar('Escolha duas categorias diferentes.');
+    const n=S.lanc.filter(l=>l.categoria===de).length;
+    let r=await sb.from('lancamentos').update({categoria:para}).eq('categoria',de); if(r.error) return erroBanco(r.error);
+    for(const ano of Object.keys(S.bud)){ const b=S.bud[ano]; if(b[de]){ const v=(b[para]||0)+b[de];
+      r=await sb.from('budgets').upsert({ano:+ano,categoria:para,valor_mensal:v},{onConflict:'ano,categoria'}); if(r.error) return erroBanco(r.error);
+      r=await sb.from('budgets').delete().eq('ano',+ano).eq('categoria',de); if(r.error) return erroBanco(r.error); b[para]=v; delete b[de]; } }
+    r=await sb.from('categorias').delete().eq('nome',de); if(r.error) return erroBanco(r.error);
+    S.lanc.forEach(l=>{ if(l.categoria===de) l.categoria=para; }); S.cats=S.cats.filter(c=>c!==de);
+    fecharModal(); avisar(`${n} lançamentos passaram de ${de} para ${para}`); ir('conf');
+  };
+}
+
+/* =====================================================================
+   GAP MÊS A MÊS
+   ===================================================================== */
+function gapMes(k){
+  const kc=ym(corte()), ano=k.slice(0,4);
+  const fator = k===kc ? (diasNoMes(k)-(+corte().slice(8))+1)/diasNoMes(k) : 1;
+  const ents=S.ent.filter(e=>ym(e.data)===k && pos(e)); let rec=soma(ents), recEst=false;
+  if(rec===0 && k>ym(HOJE)){ rec=rendaBase(); recEst=true; }
+  const caixa=S.lanc.filter(l=>ym(dataCaixa(l))===k && (k!==kc || dataCaixa(l)>=corte()));
+  const comprometido=soma(caixa);
+  const comp=S.lanc.filter(l=>ym(l.data)===k && pos(l)); const porCat={}; comp.forEach(l=>porCat[l.categoria]=(porCat[l.categoria]||0)+l.valor);
+  const orc=S.bud[ano]; let previsto, base;
+  const linhasCat=[];
+  if(orc && Object.keys(orc).length){
+    base='orcamento';
+    const cats=new Set([...Object.keys(orc),...Object.keys(porCat)]);
+    previsto=0; cats.forEach(c=>{ const o=(orc[c]||0)*fator, r=porCat[c]||0; const v=Math.max(o,r); previsto+=v; linhasCat.push({c,o,r,v}); });
+  } else { base='premissa'; previsto=soma(comp)+(k>=ym(HOJE)?(+S.cfg.premissas.gasto_variavel_mensal||0)*fator:0); Object.entries(porCat).forEach(([c,r])=>linhasCat.push({c,o:0,r,v:r})); }
+  linhasCat.sort((a,b)=>b.v-a.v);
+  return {k,rec,recEst,ents,comprometido,caixa,previsto,base,linhasCat,gapComp:rec-comprometido,gapPrev:rec-previsto,fator};
+}
+function htmlGap(){
+  const k0=ym(HOJE); const meses=[]; for(let i=0;i<12;i++) meses.push(gapMes(addYM(k0,i)));
+  let acc=0; meses.forEach(m=>{ acc+=m.gapPrev; m.acc=acc; });
+  const W=1100,H=200,pl=8,pr=8,pt=16,pb=24,bw=(W-pl-pr)/12;
+  const mP=Math.max(0,...meses.map(m=>m.gapPrev)), mN=Math.max(0,...meses.map(m=>-m.gapPrev)), tot=Math.max(1,mP+mN);
+  const alt=H-pt-pb-16, zero=pt+12+alt*mP/tot, esc_=v=>Math.abs(v)/tot*alt;
+  let g=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gap previsto por mês"><line x1="${pl}" x2="${W-pr}" y1="${zero}" y2="${zero}" stroke="#DFE4E0"/>`;
+  meses.forEach((m,i)=>{ const x=pl+i*bw, w=bw*0.5, cx=x+(bw-w)/2, h=Math.max(2,Math.abs(esc_(m.gapPrev))), y=m.gapPrev>=0?zero-h:zero;
+    g+=`<rect x="${cx}" y="${y}" width="${w}" height="${h}" rx="4" fill="${m.gapPrev>=0?'#1E8A57':'#C23B2B'}"/>`;
+    g+=`<text x="${x+bw/2}" y="${m.gapPrev>=0?y-5:y+h+13}" text-anchor="middle" font-size="12" font-weight="600" fill="#17201C">${fmtK(m.gapPrev)}</text>`;
+    g+=`<text x="${x+bw/2}" y="${H-5}" text-anchor="middle" font-size="12" fill="#66716C">${curtoYM(m.k)}</text>`;
+    g+=`<rect x="${x}" y="0" width="${bw}" height="${H}" fill="transparent" style="cursor:pointer" data-gap="${m.k}" data-tip="${T(`<b>${nomeYM(m.k)}</b><br>Receitas${m.recEst?' (estimadas)':''}: ${fmt(m.rec)}<br>Despesa prevista: ${fmt(m.previsto)}<br><b>Gap: ${fmt(m.gapPrev)}</b><br><i>Clique para detalhar</i>`)}"/>`; });
+  g+='</svg>';
+  const base=meses[1]?.base||meses[0].base;
+  return `<section class="painel">
+   <div class="cab-painel"><div><h2>Gap mês a mês</h2><div class="sub">Quanto sobra ou falta em cada mês: receitas menos despesas. Clique em um mês para ver o que compõe o valor.</div></div></div>
+   <div class="grafico">${g}</div>
+   <div class="rolagem" style="margin-top:14px"><table class="tabela"><thead><tr><th>Mês</th><th class="n">Receitas</th><th class="n">Já comprometido</th><th class="n">Gap do que já está lançado</th><th class="n">Despesa prevista</th><th class="n">Gap previsto</th><th class="n esconde-m">Acumulado</th></tr></thead><tbody>
+   ${meses.map(m=>`<tr class="clicavel" data-gap="${m.k}" tabindex="0"><td><b>${nomeYM(m.k)}</b>${m.k===ym(corte())?'<div class="lanc-meta">desde o Marco Zero</div>':''}</td><td class="n">${fmt0(m.rec)}${m.recEst?' <span class="etiqueta info">estimada</span>':''}</td><td class="n">${fmt0(m.comprometido)}</td><td class="n ${m.gapComp>=0?'gap-pos':'gap-neg'}">${fmt0(m.gapComp)}</td><td class="n">${fmt0(m.previsto)}</td><td class="n ${m.gapPrev>=0?'gap-pos':'gap-neg'}">${fmt0(m.gapPrev)}</td><td class="n esconde-m">${fmt0(m.acc)}</td></tr>`).join('')}</tbody>
+   <tfoot><tr><td>12 meses</td><td class="n">${fmt0(soma(meses,m=>m.rec))}</td><td class="n">${fmt0(soma(meses,m=>m.comprometido))}</td><td class="n">${fmt0(soma(meses,m=>m.gapComp))}</td><td class="n">${fmt0(soma(meses,m=>m.previsto))}</td><td class="n ${acc>=0?'gap-pos':'gap-neg'}">${fmt0(acc)}</td><td class="esconde-m"></td></tr></tfoot></table></div>
+   <p class="nota"><b>Já comprometido</b> = o que sai do caixa naquele mês pelo que já está lançado (faturas pelo vencimento, débitos, recorrências). <b>Despesa prevista</b> = ${base==='orcamento'?'em cada categoria, o maior valor entre o orçamento do mês e o que já foi lançado':'o que já foi lançado mais os gastos variáveis das premissas'}. Meses sem receita lançada usam a renda típica (${fmt0(rendaBase())}), marcada como estimada.</p>
+  </section>`;
+}
+document.addEventListener('click',e=>{ const d=e.target.closest('[data-gap]'); if(d) abrirGap(d.dataset.gap); });
+document.addEventListener('keydown',e=>{ if(e.key==='Enter'){ const d=e.target.closest&&e.target.closest('[data-gap]'); if(d) abrirGap(d.dataset.gap); } });
+function abrirGap(k){
+  esconderTip(); const m=gapMes(k);
+  const fat={}; m.caixa.filter(l=>l.forma==='Crédito').forEach(l=>{ const c=l.cartao||'Cartão não definido'; fat[c]=(fat[c]||0)+l.valor; });
+  const outros=m.caixa.filter(l=>l.forma!=='Crédito');
+  abrirModal(`<h2>${nomeYM(k)}</h2><p class="mudo" style="font-size:14px">Gap previsto <b class="${m.gapPrev>=0?'pos':'neg'}">${fmt(m.gapPrev)}</b> · gap do que já está lançado <b class="${m.gapComp>=0?'pos':'neg'}">${fmt(m.gapComp)}</b></p>
+  <div class="razao" style="margin-top:12px">
+    <div class="l"><span><b>Receitas</b>${m.recEst?' (estimadas pela renda típica)':''}</span><b class="pos">${fmt(m.rec)}</b></div>
+    ${m.ents.map(e=>`<div class="l"><span style="padding-left:12px">${esc(e.descricao)} · ${dataBR(e.data)}</span><span>${fmt(e.valor)}</span></div>`).join('')}
+    <div class="l"><span><b>Saídas já comprometidas</b></span><b class="neg">${fmt(m.comprometido)}</b></div>
+    ${Object.entries(fat).map(([c,v])=>`<div class="l"><span style="padding-left:12px">Fatura ${esc(c)}</span><span>${fmt(v)}</span></div>`).join('')}
+    ${outros.map(l=>`<div class="l"><span style="padding-left:12px">${esc(l.descricao||l.categoria)} · ${esc(l.forma)} · ${dataBR(l.data)}</span><span>${fmt(l.valor)}</span></div>`).join('')}
+  </div>
+  <h2 style="font-size:15.5px;margin-top:18px">Despesa prevista por categoria</h2>
+  <div class="rolagem"><table class="tabela" style="margin-top:6px"><thead><tr><th>Categoria</th><th class="n">Orçado</th><th class="n">Lançado</th><th class="n">Considerado</th></tr></thead><tbody>
+  ${m.linhasCat.map(x=>`<tr class="clicavel" data-drill="${T(JSON.stringify({k,cat:x.c}))}"><td>${esc(x.c)}</td><td class="n">${x.o?fmt0(x.o):'—'}</td><td class="n">${fmt0(x.r)}</td><td class="n"><b>${fmt0(x.v)}</b></td></tr>`).join('')}
+  </tbody></table></div>
+  <div class="botoes"><button class="btn sec" onclick="fecharModal()">Fechar</button></div>`);
+}
+
 /* =====================================================================
    VAZAMENTOS
    ===================================================================== */
@@ -1069,7 +1181,7 @@ function vVaz(){
   const {lista,janela}=detectarVazamentos(); const rev=S.cfg.vazamentos_revisao||{};
   const ativos=lista.filter(v=>rev[v.id]!=='ok'), ok=lista.filter(v=>rev[v.id]==='ok');
   const eco=soma(ativos,v=>v.economia);
-  const item=(v,i)=>`<div class="vaz ${rev[v.id]==='ok'?'revisado':''}"><div class="pos-rank">${i+1}</div><div><h3>${esc(v.tipo)}</h3><div class="motivo"><b>Por quê:</b> ${esc(v.motivo)}</div><div class="reco"><b>O que fazer:</b> ${esc(v.reco)}</div>
+  const item=(v,i)=>`<div class="vaz ${rev[v.id]==='ok'?'revisado':''}"><div class="pos-rank">${i+1}</div><div><h3>${esc(v.tipo)}</h3>${S.cats.includes(v.cat)?`<button class="btn link" style="font-size:13px" data-drill="${T(JSON.stringify({cat:v.cat,desde:janela}))}">Ver lançamentos de ${esc(v.cat)}</button>`:''}<div class="motivo"><b>Por quê:</b> ${esc(v.motivo)}</div><div class="reco"><b>O que fazer:</b> ${esc(v.reco)}</div>
     <div style="margin-top:8px;display:flex;gap:8px">${rev[v.id]==='ok'?`<button class="btn sec pequeno" onclick="revisarVaz('${esc(v.id)}',null)">Voltar a analisar</button>`:`<button class="btn sec pequeno" onclick="revisarVaz('${esc(v.id)}','ok')">Está ok, é intencional</button>`}</div></div>
     <div class="nums"><span>Mensal</span><span>Anual</span><span>Economia possível</span><b>${fmt0(v.mensal)}</b><b>${fmt0(v.anual)}</b><b class="pos">${v.economia?fmt0(v.economia)+'/mês':'—'}</b></div></div>`;
   return topo('Vazamentos financeiros','Onde o dinheiro escapa. Nada é chamado de desperdício sem motivo — você revisa cada item.',
@@ -1209,7 +1321,7 @@ function vRel(){
   <div class="balanco" style="margin-top:0"><div><span>Receita</span><strong class="pos">${fmt0(r.rec)}</strong><small>média ${fmt0(r.rec/Math.max(1,r.meses))}/mês</small></div><div><span>Despesas</span><strong class="neg">${fmt0(r.des)}</strong><small>média ${fmt0(r.des/Math.max(1,r.meses))}/mês</small></div>
    <div><span>Economia</span><strong class="${r.rec-r.des>=0?'pos':'neg'}">${fmt0(r.rec-r.des)}</strong><small>${r.rec?pct((r.rec-r.des)/r.rec)+' da receita':''}</small></div><div><span>Meses com dados</span><strong>${r.meses}</strong><small>${comparavel?'comparável com '+(+a-1):'sem comparação anual'}</small></div></div>
   <div class="grade g2" style="margin-top:18px">
-    <section class="painel"><h2>Principais categorias de gasto</h2><div style="margin-top:12px">${barrasH(top.map(([nome,v])=>({nome,v})),{total:r.des})}</div></section>
+    <section class="painel"><h2>Principais categorias de gasto</h2><div style="margin-top:12px">${barrasH(top.map(([nome,v])=>({nome,v})),{total:r.des,drill:{ano:a}})}</div></section>
     <section class="painel"><h2>Resumo do ano</h2><div class="diag" style="margin-top:12px">
       <div class="diag-item ${r.rec-r.des>=0?'pos':'neg'}">${ico(r.rec-r.des>=0?'ok':'risco')}<div>Quanto foi economizado: ${fmt0(r.rec-r.des)} no período registrado.</div></div>
       ${cresceu.length?`<div class="diag-item alerta">${ico('alerta')}<div>Despesas que cresceram (média mensal vs. ${+a-1}): ${cresceu.map(([c,m,n])=>`${esc(c)} ${pct(m/n-1)}`).join(', ')}.</div></div>`:''}
@@ -1241,7 +1353,7 @@ function vConf(){
     <p class="nota">Os valores de abertura são saldos, não receitas nem despesas. Faturas e parcelas vêm dos lançamentos de cartão e por isso não devem ser cadastradas de novo como dívida.</p></section>
   <section class="painel"><h2>Categorias</h2><div class="sub">Marque quais são essenciais. Isso alimenta o identificador de vazamentos.</div>
     <div class="linha-campos" style="margin-top:12px">${S.cats.map(c=>{const e= c in mapa? mapa[c] : !NAO_ESSENCIAIS.includes(c); return `<label style="display:flex;gap:8px;align-items:center;font-size:14px;padding:6px 0"><input type="checkbox" data-ess="${esc(c)}" ${e?'checked':''}> ${esc(c)}</label>`;}).join('')}</div>
-    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn pequeno" onclick="salvarEssenciais()">Salvar categorias essenciais</button><input type="text" id="novaCat" placeholder="Nova categoria" style="max-width:220px"><button class="btn sec pequeno" onclick="novaCategoria()">Adicionar categoria</button></div></section>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn pequeno" onclick="salvarEssenciais()">Salvar categorias essenciais</button><button class="btn sec pequeno" onclick="juntarCategorias()">Juntar duas categorias</button><input type="text" id="novaCat" placeholder="Nova categoria" style="max-width:220px"><button class="btn sec pequeno" onclick="novaCategoria()">Adicionar categoria</button></div></section>
   <section class="painel"><h2>Backup e exportação</h2><div class="sub">Baixe uma cópia completa dos dados a qualquer momento.</div>
     <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn sec" onclick="exportarCSV()">Exportar para Excel (CSV)</button><button class="btn sec" onclick="backupJSON()">Backup completo (JSON)</button></div></section>`;
 }
@@ -1253,7 +1365,7 @@ function alterarCorte(){
     await salvarConfig('marco_zero',{data:d,definido_em:new Date().toISOString(),anterior:corte()},'Data de corte alterada'); fecharModal(); document.getElementById('marcoMenu').textContent='Marco Zero em '+dataBR(d); ir('conf'); };
 }
 async function salvarEssenciais(){ const m={}; document.querySelectorAll('[data-ess]').forEach(i=>m[i.dataset.ess]=i.checked); await salvarConfig('cat_essencial',m,'Categorias salvas'); }
-async function novaCategoria(){ const n=document.getElementById('novaCat').value.trim(); if(!n) return; if(S.cats.some(c=>norm(c)===norm(n))) return avisar('Essa categoria já existe.');
+async function novaCategoria(){ const n=document.getElementById('novaCat').value.trim(); if(!n) return; const ja=S.cats.find(c=>chaveCat(c)===chaveCat(n)); if(ja) return avisar(`Essa categoria já existe como "${ja}".`);
   const {error}=await sb.from('categorias').insert({nome:n}); if(error) return erroBanco(error); S.cats.push(n); S.cats.sort((a,b)=>a.localeCompare(b,'pt-BR')); avisar('Categoria adicionada'); ir('conf'); }
 function backupJSON(){ baixar(JSON.stringify({gerado_em:new Date().toISOString(),lancamentos:S.lanc,entradas:S.ent,patrimonio:S.pat,historico:S.hist,orcamentos:S.bud,cartoes:S.cartoes,metas:S.metas,config:S.cfg},null,1),'financas-familia-backup-'+HOJE+'.json','application/json'); avisar('Backup baixado'); }
 
