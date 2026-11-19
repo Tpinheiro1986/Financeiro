@@ -153,6 +153,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--floresta-3);outline:2
 .tabela td{padding:10px;border-bottom:1px solid var(--linha-2);vertical-align:top}
 .tabela td.n,.tabela th.n{text-align:right;white-space:nowrap}
 .tabela tr.arquivo td{color:var(--nevoa)}
+.tabela tr.novo td{background:#E5F3EB}
+.tabela tr.novo td:first-child{box-shadow:inset 3px 0 0 var(--pos)}
+.sub-lista{font-size:13.5px;font-weight:700;color:var(--tinta-2);margin:18px 0 4px;display:flex;justify-content:space-between}
 .rolagem{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .lanc-desc{font-weight:600}
 .lanc-meta{font-size:12.5px;color:var(--nevoa);margin-top:2px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
@@ -277,6 +280,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
    ===================================================================== */
 const S = { cats:[], lanc:[], ent:[], pat:[], hist:[], bud:{}, cartoes:[], metas:[], cfg:{}, novasTabelas:true };
 let usuario = null, vistaAtual = 'visao';
+const NOVOS = new Set();
 const UI = { mesLanc:null, buscaLanc:'', arquivo:false, tipoLanc:'gasto', forma:'Débito', mesFat:null, cartaoSel:null,
              mesOrc:null, horizonte:60, janelaVaz:'90', anoRel:null };
 
@@ -693,7 +697,9 @@ function vLanc(){
   let lista = [...S.lanc.map(l=>({...l,_t:'g'})), ...S.ent.map(e=>({...e,_t:'r'}))];
   lista = b ? lista.filter(l=>norm(l.descricao+' '+(l.categoria||'')+' '+(l.quem||'')+' '+String(l.valor).replace('.',',')).includes(b)) : lista.filter(l=>ym(l.data)===k);
   if(!UI.arquivo) lista=lista.filter(l=>l.data>=corte());
-  lista.sort((a,c)=>c.data.localeCompare(a.data)||(c.criado_em||'').localeCompare(a.criado_em||''));
+  lista.sort((a,c)=>(NOVOS.has(c.id)-NOVOS.has(a.id))||c.data.localeCompare(a.data)||(c.criado_em||'').localeCompare(a.criado_em||''));
+  const ateHoje = lista.filter(l=>l.data<=HOJE || NOVOS.has(l.id)), futuros = lista.filter(l=>l.data>HOJE && !NOVOS.has(l.id)).reverse();
+  const tabela = arr => `<div class="rolagem"><table class="tabela"><thead><tr><th>Data</th><th>Descrição</th><th class="esconde-m">Forma</th><th class="n">Valor</th><th></th></tr></thead><tbody>${arr.map(linhaLanc).join('')}</tbody></table></div>`;
   const tg=soma(lista.filter(l=>l._t==='g')), tr=soma(lista.filter(l=>l._t==='r'));
   const optsCat = S.cats.map(c=>`<option>${esc(c)}</option>`).join('');
   vLanc.depois=()=>{
@@ -734,15 +740,16 @@ function vLanc(){
       <label style="font-size:13.5px;display:flex;gap:6px;align-items:center"><input type="checkbox" ${UI.arquivo?'checked':''} onchange="UI.arquivo=this.checked;ir('lanc')"> Mostrar histórico anterior ao Marco Zero</label></div>
     </div>
     <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:14px;margin-bottom:8px"><span>Despesas: <b class="neg">${fmt(tg)}</b></span><span>Receitas: <b class="pos">${fmt(tr)}</b></span><span>${lista.length} lançamentos</span></div>
-    ${lista.length? `<div class="rolagem"><table class="tabela"><thead><tr><th>Data</th><th>Descrição</th><th class="esconde-m">Forma</th><th class="n">Valor</th><th></th></tr></thead><tbody>${lista.map(linhaLanc).join('')}</tbody></table></div>`
+    ${lista.length? (ateHoje.length? tabela(ateHoje) : `<div class="vazio">Nada lançado até hoje neste mês.</div>`)
+      + (futuros.length? `<div class="sub-lista"><span>Agendados para depois de hoje (${futuros.length})</span><span>${fmt(soma(futuros))}</span></div>${tabela(futuros)}` : '')
       : `<div class="vazio">${b?'Nada encontrado para essa busca.':`Nenhum lançamento em ${nomeYM(k)}${UI.arquivo?'':' após o Marco Zero'}. Use o formulário acima para registrar.`}</div>`}
   </section>`;
 }
 function linhaLanc(l){
   const arq = l.data<corte();
-  if(l._t==='r') return `<tr class="${arq?'arquivo':''}"><td>${dataBR(l.data)}</td><td><div class="lanc-desc">${esc(l.descricao)}</div><div class="lanc-meta"><span class="etiqueta pos">Receita</span>${l.quem?esc(l.quem):''}${arq?'<span class="etiqueta">Arquivo</span>':''}</div></td><td class="esconde-m">—</td><td class="n pos valor">${fmt(l.valor)}</td><td><div class="acoes"><button class="icone-btn" aria-label="Excluir receita" onclick="excluirEnt('${l.id}')">${ico('lixo')}</button></div></td></tr>`;
+  if(l._t==='r') return `<tr class="${arq?'arquivo':''} ${NOVOS.has(l.id)?'novo':''}"><td>${dataBR(l.data)}</td><td><div class="lanc-desc">${esc(l.descricao)}</div><div class="lanc-meta"><span class="etiqueta pos">Receita</span>${l.quem?esc(l.quem):''}${arq?'<span class="etiqueta">Arquivo</span>':''}</div></td><td class="esconde-m">—</td><td class="n pos valor">${fmt(l.valor)}</td><td><div class="acoes"><button class="icone-btn" aria-label="Excluir receita" onclick="excluirEnt('${l.id}')">${ico('lixo')}</button></div></td></tr>`;
   const venc=faturaVenc(l);
-  return `<tr class="${arq?'arquivo':''}"><td>${dataBR(l.data)}</td><td><div class="lanc-desc">${esc(l.descricao||l.categoria)}</div><div class="lanc-meta"><span>${esc(l.categoria)}</span>
+  return `<tr class="${arq?'arquivo':''} ${NOVOS.has(l.id)?'novo':''}" id="l-${l.id}"><td>${dataBR(l.data)}</td><td><div class="lanc-desc">${esc(l.descricao||l.categoria)}${NOVOS.has(l.id)?' <span class="etiqueta pos">Lançado agora</span>':''}</div><div class="lanc-meta"><span>${esc(l.categoria)}</span>
     ${l.parcela?`<span class="etiqueta info">${l.parcela.n}/${l.parcela.total}</span>`:''}${l.recorrente?`<span class="etiqueta info">Recorrente ${l.recorrente.n}/${l.recorrente.total}</span>`:''}
     ${essencial(l)?'':'<span class="etiqueta alerta">Não essencial</span>'}${venc?`<span>fatura ${dataBR(venc).slice(0,5)}</span>`:''}${l.quem?`<span>· ${esc(l.quem)}</span>`:''}${arq?'<span class="etiqueta">Arquivo</span>':''}</div></td>
     <td class="esconde-m">${esc(l.forma)}${l.cartao?' · '+esc(l.cartao):''}</td><td class="n valor">${fmt(l.valor)}</td>
@@ -757,7 +764,7 @@ async function salvarLanc(){
     const quem=document.getElementById('fQuemR').value.trim();
     const linhas=Array.from({length:rep},(_,i)=>({id:uid(),data:addMeses(data,i),descricao:desc,valor,quem}));
     const {error}=await sb.from('entradas').insert(linhas); if(error) return erroBanco(error);
-    S.ent.push(...linhas.map(e=>({...e,recorrente:rep>1}))); avisar(rep>1?`Receita lançada por ${rep} meses`:'Receita lançada'); ir('lanc'); return;
+    S.ent.push(...linhas.map(e=>({...e,recorrente:rep>1}))); NOVOS.add(linhas[0].id); UI.mesLanc=ym(linhas[0].data); avisar(rep>1?`Receita lançada por ${rep} meses`:'Receita lançada'); ir('lanc'); return;
   }
   const cat=document.getElementById('fCat').value, quem=document.getElementById('fQuem').value.trim(), essV=document.getElementById('fEss').value;
   const parc= UI.forma==='Crédito' ? +document.getElementById('fParc').value : 1, cartao= UI.forma==='Crédito' ? document.getElementById('fCartao').value : null;
@@ -775,7 +782,7 @@ async function salvarLanc(){
     const btn=document.getElementById('btnSalvarLanc'); if(btn) btn.disabled=true;
     const {error}=await sb.from('lancamentos').insert(ins); if(btn) btn.disabled=false;
     if(error) return erroBanco(error);
-    S.lanc.push(...ins.map(lancDe)); fecharModal(); avisar(rep>1?`Despesa lançada por ${rep} meses`:parc>1?`Lançada em ${parc}x de ${fmt(linhas[0].valor)}`:'Despesa lançada'); ir('lanc');
+    S.lanc.push(...ins.map(lancDe)); NOVOS.add(ins[0].id); UI.mesLanc=ym(ins[0].data); UI.buscaLanc=''; fecharModal(); avisar(rep>1?`Despesa lançada por ${rep} meses`:parc>1?`Lançada em ${parc}x de ${fmt(linhas[0].valor)}`:'Despesa lançada'); ir('lanc');
   };
   if(dup){ abrirModal(`<h2>Pode ser um lançamento repetido</h2><p>Já existe ${fmt(dup.valor)} em ${esc(dup.categoria)} no dia ${dataBR(dup.data)}${dup.descricao?` (${esc(dup.descricao)})`:''}. Deseja lançar mesmo assim?</p>
     <div class="botoes"><button class="btn sec" onclick="fecharModal()">Não lançar</button><button class="btn" id="mConf">Lançar mesmo assim</button></div>`); document.getElementById('mConf').onclick=gravar; return; }
@@ -868,7 +875,7 @@ function previaImport(txt){
     if(!S.novasTabelas){ avisar('Aplique a atualização do banco antes de importar.'); return; }
     const {error}=await sb.from('lancamentos').insert(ins); if(error){ btn.disabled=false; return erroBanco(error,'importar'); }
     for(const x of existentes){ if(!x.l.chave_import){ await sb.from('lancamentos').update({chave_import:x.chave,cartao:'Nubank',fatura_venc:venc}).eq('id',x.l.id); Object.assign(x.l,{chave_import:x.chave,cartao:'Nubank',fatura_venc:venc}); } }
-    S.lanc.push(...ins.map(lancDe)); fecharModal(); avisar(`${atual.length} itens importados e ${fut.length} parcelas futuras geradas`); ir('cartoes'); };
+    S.lanc.push(...ins.map(lancDe)); NOVOS.add(ins[0].id); UI.mesLanc=ym(ins[0].data); UI.buscaLanc=''; fecharModal(); avisar(`${atual.length} itens importados e ${fut.length} parcelas futuras geradas`); ir('cartoes'); };
 }
 function exportarCSV(){
   const q=s=>`"${String(s??'').replace(/"/g,'""')}"`;
