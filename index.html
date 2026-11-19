@@ -441,6 +441,7 @@ function totaisPatrimonio(){
   const dividas = passivos + cartaoAberto;
   return { ativos:soma(at), disp, inv, bens, passivos, cartaoAberto, dividas, liquido: soma(at) - dividas };
 }
+const fixoNoMes = (cat,k) => S.lanc.find(l=>l.origem==='fixo_orcado' && l.categoria===cat && ym(l.data)===k);
 const EXTRA = /13|décimo|ferias|férias|bônus|bonus|plr/i;
 const planoItens = k => S.planoRec.filter(p=>p.ano===+k.slice(0,4) && p.mes===+k.slice(5,7));
 const planoMes = k => soma(planoItens(k));
@@ -762,7 +763,7 @@ function linhaLanc(l){
   const venc=faturaVenc(l);
   return `<tr class="${arq?'arquivo':''} ${NOVOS.has(l.id)?'novo':''}" id="l-${l.id}"><td>${dataBR(l.data)}</td><td><div class="lanc-desc">${esc(l.descricao||l.categoria)}${NOVOS.has(l.id)?' <span class="etiqueta pos">Lançado agora</span>':''}</div><div class="lanc-meta"><span>${esc(l.categoria)}</span>
     ${l.parcela?`<span class="etiqueta info">${l.parcela.n}/${l.parcela.total}</span>`:''}${l.recorrente?`<span class="etiqueta info">Recorrente ${l.recorrente.n}/${l.recorrente.total}</span>`:''}
-    ${essencial(l)?'':'<span class="etiqueta alerta">Não essencial</span>'}${venc?`<span>fatura ${dataBR(venc).slice(0,5)}</span>`:''}${l.quem?`<span>· ${esc(l.quem)}</span>`:''}${arq?'<span class="etiqueta">Arquivo</span>':''}</div></td>
+    ${l.origem==='fixo_orcado'?'<span class="etiqueta">Conta fixa</span>':''}${essencial(l)?'':'<span class="etiqueta alerta">Não essencial</span>'}${venc?`<span>fatura ${dataBR(venc).slice(0,5)}</span>`:''}${l.quem?`<span>· ${esc(l.quem)}</span>`:''}${arq?'<span class="etiqueta">Arquivo</span>':''}</div></td>
     <td class="esconde-m">${esc(l.forma)}${l.cartao?' · '+esc(l.cartao):''}</td><td class="n valor">${fmt(l.valor)}</td>
     <td><div class="acoes"><button class="icone-btn" aria-label="Editar" onclick="abrirEdicao('${l.id}')">${ico('editar')}</button><button class="icone-btn" aria-label="Excluir" onclick="pedirExclusao('${l.id}')">${ico('lixo')}</button></div></td></tr>`;
 }
@@ -797,6 +798,9 @@ async function salvarLanc(){
     if(error) return erroBanco(error);
     S.lanc.push(...ins.map(lancDe)); NOVOS.add(ins[0].id); UI.mesLanc=ym(ins[0].data); UI.buscaLanc=''; fecharModal(); avisar(rep>1?`Despesa lançada por ${rep} meses`:parc>1?`Lançada em ${parc}x de ${fmt(linhas[0].valor)}`:'Despesa lançada'); ir('lanc');
   };
+  const fixo = !dup && rep===1 && parc===1 && fixoNoMes(cat, ym(dia));
+  if(fixo){ abrirModal(`<h2>${esc(cat)} já tem conta fixa neste mês</h2><p>Já está lançada a conta fixa de ${fmt(fixo.valor)} em ${esc(cat)} para ${nomeYM(ym(dia))}. Se este gasto faz parte dela, não precisa lançar. Se for um gasto a mais, pode lançar.</p>
+    <div class="botoes"><button class="btn sec" onclick="fecharModal()">Não lançar</button><button class="btn" id="mConf">Lançar como gasto a mais</button></div>`); document.getElementById('mConf').onclick=gravar; return; }
   if(dup){ abrirModal(`<h2>Pode ser um lançamento repetido</h2><p>Já existe <b>${esc(dup.descricao||dup.categoria)}</b> de ${fmt(dup.valor)} em ${esc(dup.categoria)} no dia ${dataBR(dup.data)}. Você está lançando ${fmt(linhas[0].valor)} em ${esc(cat)} no dia ${dataBR(dia)}. Deseja lançar mesmo assim?</p>
     <div class="botoes"><button class="btn sec" onclick="fecharModal()">Não lançar</button><button class="btn" id="mConf">Lançar mesmo assim</button></div>`); document.getElementById('mConf').onclick=gravar; return; }
   gravar();
@@ -860,11 +864,24 @@ function abrirImportar(){
   document.getElementById('iArq').onchange=async e=>{ const f=e.target.files[0]; if(!f) return; const m=f.name.match(/(\d{4}-\d{2}-\d{2})/); if(m) document.getElementById('iVenc').value=m[1]; previaImport(await f.text()); };
   document.getElementById('iVenc').onchange=()=>{ const f=document.getElementById('iArq').files[0]; if(f) f.text().then(previaImport); };
 }
-function parseCSV(txt){ const out=[]; txt.split(/\r?\n/).slice(1).forEach(l=>{ if(!l.trim()) return; const m=l.match(/^([^,]+),(.*),"?([^"]*)"?$/); if(!m) return; out.push({date:m[1],title:m[2].replace(/^"|"$/g,''),amount:parseFloat(m[3].replace(/\s/g,'').replace(/\./g,'').replace(',','.'))}); }); return out; }
+function parseCSV(txt){
+  const linhas=[]; let campo='', linha=[], aspas=false;
+  for(let i=0;i<txt.length;i++){ const ch=txt[i];
+    if(aspas){ if(ch==='"'){ if(txt[i+1]==='"'){ campo+='"'; i++; } else aspas=false; } else campo+=ch; }
+    else if(ch==='"') aspas=true; else if(ch===','){ linha.push(campo); campo=''; }
+    else if(ch==='\n'||ch==='\r'){ if(ch==='\r'&&txt[i+1]==='\n') i++; linha.push(campo); campo=''; if(linha.some(x=>x.trim())) linhas.push(linha); linha=[]; }
+    else campo+=ch; }
+  if(campo||linha.length){ linha.push(campo); if(linha.some(x=>x.trim())) linhas.push(linha); }
+  const cab=(linhas.shift()||[]).map(h=>h.trim().toLowerCase().replace(/^\ufeff/,''));
+  const iD=cab.indexOf('date'), iT=cab.indexOf('title'), iA=cab.indexOf('amount');
+  if(iD<0||iT<0||iA<0) return [];
+  const num=v=>{ v=String(v).replace(/\s/g,''); if(v.includes(',')) v=v.replace(/\./g,'').replace(',','.'); return parseFloat(v); };
+  return linhas.map(l=>({date:(l[iD]||'').trim(), title:(l[iT]||'').trim(), amount:num(l[iA])})).filter(r=>/^\d{4}-\d{2}-\d{2}$/.test(r.date));
+}
 function previaImport(txt){
   const venc=document.getElementById('iVenc').value; const box=document.getElementById('iPrev');
   if(!venc){ box.innerHTML='<div class="diag-item alerta">'+ico('alerta')+'<div>Informe o vencimento da fatura.</div></div>'; return; }
-  const rows=parseCSV(txt); const novos=[], existentes=[], ignorados=[];
+  const rows=parseCSV(txt); const novos=[], existentes=[], ignorados=[], cobertos=[];
   const kV=ym(venc); const c=cartaoDe('Nubank');
   const visto={};
   rows.forEach(r=>{
@@ -876,15 +893,19 @@ function previaImport(txt){
     const {c:cat,e}=catAuto(base);
     if(pm){ const n=+pm[2], tot=+pm[3], g=uid(); for(let j=n;j<=tot;j++){ const kv=addYM(kV,j-n); const kc=addYM(kv,-1);
       novos.push({id:uid(),data: j===n && !pm ? r.date : diaNoMes(kc,30),categoria:cat,descricao:base,valor:r.amount,forma:'Crédito',quem:'TP',cartao:'Nubank',fatura_venc:diaNoMes(kv,c.dia_vencimento),origem:'import_nubank',chave_import: j===n?chave:`nubank:${base}:${j}/${tot}:${r.amount.toFixed(2)}`,essencial:e,parcela_n:j,parcela_total:tot,parcela_grupo:g,_fut:j>n}); } }
-    else novos.push({id:uid(),data:r.date,categoria:cat,descricao:r.title,valor:r.amount,forma:'Crédito',quem:'TP',cartao:'Nubank',fatura_venc:venc,origem:'import_nubank',chave_import:chave,essencial:e});
+    else { const item={id:uid(),data:r.date,categoria:cat,descricao:r.title,valor:r.amount,forma:'Crédito',quem:'TP',cartao:'Nubank',fatura_venc:venc,origem:'import_nubank',chave_import:chave,essencial:e};
+      const fx=fixoNoMes(cat,ym(r.date)); if(fx) cobertos.push({...item,_fixo:fx.valor}); else novos.push(item); }
   });
   const atual=novos.filter(n=>!n._fut), fut=novos.filter(n=>n._fut);
   const totCSV=soma(rows.filter(r=>r.amount>0&&!/^Pagamento|^IOF/i.test(r.title)),r=>r.amount);
   box.innerHTML=`<div class="razao"><div class="l"><span>Total da fatura no arquivo</span><b>${fmt(totCSV)}</b></div><div class="l"><span>Já lançados no sistema (${existentes.length})</span><b>${fmt(soma(existentes,x=>x.r.amount))}</b></div>
-   <div class="l"><span>Novos nesta fatura (${atual.length})</span><b>${fmt(soma(atual))}</b></div><div class="l"><span>Parcelas futuras a gerar (${fut.length})</span><b>${fmt(soma(fut))}</b></div><div class="l"><span>Ignorados (pagamento, IOF)</span><b>${ignorados.length}</b></div></div>
+   <div class="l"><span>Novos nesta fatura (${atual.length})</span><b>${fmt(soma(atual))}</b></div><div class="l"><span>Parcelas futuras a gerar (${fut.length})</span><b>${fmt(soma(fut))}</b></div><div class="l"><span>Ignorados (pagamento, IOF)</span><b>${ignorados.length}</b></div>
+   ${cobertos.length?`<div class="l"><span>Cobertos por conta fixa do mês (${cobertos.length}): ${cobertos.map(c=>esc(c.descricao)).join(', ')}</span><b>${fmt(soma(cobertos))}</b></div>`:''}</div>
+   ${cobertos.length?`<label style="display:flex;gap:8px;margin-top:8px;font-size:13.5px"><input type="checkbox" id="iCob"> Importar também os itens cobertos por conta fixa (eles serão contados além da conta fixa)</label>`:''}
    ${atual.length?`<div class="rolagem" style="max-height:220px;margin-top:10px"><table class="tabela"><tbody>${atual.map(n=>`<tr><td>${dataBR(n.data)}</td><td>${esc(n.descricao)}${n.parcela_n?` <span class="etiqueta info">${n.parcela_n}/${n.parcela_total}</span>`:''}<div class="lanc-meta">${esc(n.categoria)}</div></td><td class="n">${fmt(n.valor)}</td></tr>`).join('')}</tbody></table></div>`:''}`;
-  const btn=document.getElementById('iOk'); btn.disabled=!novos.length;
-  btn.onclick=async()=>{ btn.disabled=true; const ins=novos.map(({_fut,...x})=>x);
+  const btn=document.getElementById('iOk'); btn.disabled=!novos.length && !cobertos.length;
+  btn.onclick=async()=>{ const incl=document.getElementById('iCob')?.checked; const lista=[...novos, ...(incl?cobertos:[])]; if(!lista.length){ fecharModal(); avisar('Nada novo para importar'); return; }
+    btn.disabled=true; const ins=lista.map(({_fut,_fixo,...x})=>x);
     if(!S.novasTabelas){ avisar('Aplique a atualização do banco antes de importar.'); return; }
     const {error}=await sb.from('lancamentos').insert(ins); if(error){ btn.disabled=false; return erroBanco(error,'importar'); }
     for(const x of existentes){ if(!x.l.chave_import){ await sb.from('lancamentos').update({chave_import:x.chave,cartao:'Nubank',fatura_venc:venc}).eq('id',x.l.id); Object.assign(x.l,{chave_import:x.chave,cartao:'Nubank',fatura_venc:venc}); } }
