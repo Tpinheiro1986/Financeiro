@@ -283,7 +283,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 /* =====================================================================
    ESTADO E UTILITÁRIOS
    ===================================================================== */
-const S = { cats:[], lanc:[], ent:[], pat:[], hist:[], bud:{}, cartoes:[], metas:[], cfg:{}, novasTabelas:true };
+const S = { planoRec:[], cats:[], lanc:[], ent:[], pat:[], hist:[], bud:{}, cartoes:[], metas:[], cfg:{}, novasTabelas:true };
 let usuario = null, vistaAtual = 'visao';
 const NOVOS = new Set();
 const chaveCat = s => norm(s).replace(/[^a-z0-9]/g,'');
@@ -400,6 +400,7 @@ async function carregar(){
   S.hist = hist.data ? hist.data.map(h=>({...h,valor:Number(h.valor)})) : [];
   S.cartoes = cart.data && cart.data.length ? cart.data : [{id:null,nome:'Nubank',limite:null,dia_fechamento:30,dia_vencimento:7}];
   S.metas = metas.data || [];
+  const pr = await q('plano_receitas'); S.planoRec = pr.error ? [] : pr.data.map(x=>({...x,valor:+x.valor}));
   S.cfg = {}; (cfg.data||[]).forEach(c=>S.cfg[c.chave]=c.valor);
   if(!S.cfg.marco_zero) S.cfg.marco_zero = {data:'2026-11-19'};
   S.cfg.premissas = {...DEFAULT_PREMISSAS, ...(S.cfg.premissas||{})};
@@ -440,10 +441,13 @@ function totaisPatrimonio(){
   const dividas = passivos + cartaoAberto;
   return { ativos:soma(at), disp, inv, bens, passivos, cartaoAberto, dividas, liquido: soma(at) - dividas };
 }
+const EXTRA = /13|décimo|ferias|férias|bônus|bonus|plr/i;
+const planoItens = k => S.planoRec.filter(p=>p.ano===+k.slice(0,4) && p.mes===+k.slice(5,7));
+const planoMes = k => soma(planoItens(k));
 function rendaBase(){
   if(S.cfg.premissas.renda_mensal) return +S.cfg.premissas.renda_mensal;
   const k0 = ym(HOJE); const vals=[];
-  for(let i=0;i<12;i++){ const k=addYM(k0,i); const t=soma(S.ent.filter(e=>ym(e.data)===k && !/13|décimo|ferias|férias|bônus|bonus|plr/i.test(e.descricao))); if(t>0) vals.push(t); }
+  for(let i=0;i<12;i++){ const k=addYM(k0,i); let t=soma(S.ent.filter(e=>ym(e.data)===k && !EXTRA.test(e.descricao))); if(!t) t=soma(planoItens(k).filter(p=>!EXTRA.test(p.descricao))); if(t>0) vals.push(t); }
   if(!vals.length) return 0;
   vals.sort((a,b)=>a-b); return vals[Math.floor(vals.length/2)];
 }
@@ -455,7 +459,7 @@ function fixasBase(){
 /* Fluxo de caixa mensal: o que está registrado + estimativa de gastos variáveis */
 function fluxoMes(k){
   let entR = soma(S.ent.filter(e=>ym(e.data)===k)); let entEst = 0;
-  if(entR===0 && k>ym(HOJE)) entEst = rendaBase();
+  if(entR===0 && k>ym(HOJE)) entEst = planoMes(k) || rendaBase();
   const saiR = soma(S.lanc.filter(l=>ym(dataCaixa(l))===k));
   const kHoje = ym(HOJE); let est = 0;
   const v = +S.cfg.premissas.gasto_variavel_mensal || 0;
@@ -537,7 +541,7 @@ function svgFluxo(meses, escuro=true){
     const lbl = curtoYM(m.k);
     g+=`<text x="${x+bw/2}" y="${H-6}" text-anchor="middle" font-size="12" fill="${m.k===kH?(escuro?'#fff':'#17201C'):cTxt}" font-weight="${m.k===kH?700:400}">${lbl}</text>`;
     if(m.k===kC){ g+=`<line x1="${x+2}" x2="${x+2}" y1="${pt-10}" y2="${H-pb+2}" stroke="${escuro?'#CFE6D9':'#0F3D2E'}" stroke-dasharray="3 3"/><text x="${x+6}" y="${pt-4}" font-size="11.5" fill="${escuro?'#CFE6D9':'#0F3D2E'}">Marco Zero</text>`; }
-    const t=`<b>${nomeYM(m.k)}</b><br>Entradas: ${fmt(m.entradas)}${m.entEst?`<br>Renda estimada: ${fmt(m.entEst)}`:''}<br>Saídas registradas: ${fmt(m.saidas)}${m.estimado?`<br>Variáveis estimadas: ${fmt(m.estimado)}`:''}<br><b>Saldo: ${fmt(m.saldo)}</b>`;
+    const t=`<b>${nomeYM(m.k)}</b><br>Entradas: ${fmt(m.entradas)}${m.entEst?`<br>Receita ${planoMes(m.k)?'planejada':'estimada'}: ${fmt(m.entEst)}`:''}<br>Saídas registradas: ${fmt(m.saidas)}${m.estimado?`<br>Variáveis estimadas: ${fmt(m.estimado)}`:''}<br><b>Saldo: ${fmt(m.saldo)}</b>`;
     g+=`<rect x="${x}" y="0" width="${bw}" height="${H-pb}" fill="transparent" data-tip="${T(t)}"/>`;
   });
   return g+'</svg>';
@@ -654,7 +658,7 @@ function vVisao(){
     </div>
     <div class="fluxo">
       <h2 style="display:flex;justify-content:space-between;gap:10px">Os próximos 12 meses no caixa <button class="btn link" style="color:var(--menta);font-size:13px" onclick="ir('plan')">Ver gap mês a mês</button></h2>
-      <div class="legenda"><span><i style="background:#9CC9B1"></i>Entradas</span><span><i style="background:#F0A496"></i>Saídas já contratadas</span><span><i style="background:repeating-linear-gradient(45deg,#F0A496 0 2px,transparent 2px 5px);border:1px solid #F0A496"></i>Gastos variáveis estimados</span><span><i style="background:repeating-linear-gradient(45deg,#9CC9B1 0 2px,transparent 2px 5px);border:1px solid #9CC9B1"></i>Renda estimada</span></div>
+      <div class="legenda"><span><i style="background:#9CC9B1"></i>Entradas</span><span><i style="background:#F0A496"></i>Saídas já contratadas</span><span><i style="background:repeating-linear-gradient(45deg,#F0A496 0 2px,transparent 2px 5px);border:1px solid #F0A496"></i>Gastos variáveis estimados</span><span><i style="background:repeating-linear-gradient(45deg,#9CC9B1 0 2px,transparent 2px 5px);border:1px solid #9CC9B1"></i>Receita planejada</span></div>
       ${svgFluxo(meses)}
     </div>
   </section>
@@ -798,7 +802,7 @@ async function salvarLanc(){
   gravar();
 }
 function abrirModal(html){ const c=document.getElementById('modalCaixa'); c.innerHTML=html; c.scrollTop=0; document.getElementById('modal').classList.add('aberto'); setTimeout(()=>{ const i=c.querySelector('input,select'); if(i) i.focus({preventScroll:true}); else { c.setAttribute('tabindex','-1'); c.focus({preventScroll:true}); } c.scrollTop=0; },30); }
-function fecharModal(){ document.getElementById('modal').classList.remove('aberto'); }
+function fecharModal(){ document.getElementById('modal').classList.remove('aberto'); document.getElementById('modalCaixa').style.maxWidth=''; }
 document.getElementById('modal').addEventListener('click',e=>{ if(e.target.id==='modal') fecharModal(); });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') fecharModal(); });
 
@@ -970,11 +974,11 @@ function vPlan(){
     return `<tr class="clicavel" data-drill="${T(JSON.stringify({k,cat:c}))}" tabindex="0"><td><b>${esc(c)}</b>${p!=null&&p>=.7?` <span class="etiqueta ${nivel(p)}">${p>=1?'Estourou':p>=.9?'90% usado':'70% usado'}</span>`:''}</td><td class="n">${o?fmt(o):'—'}</td><td class="n">${fmt(r)}</td><td class="n ${d>0?'neg':'pos'}">${o?fmt(d):'—'}</td><td class="n esconde-m">${p!=null?pct(p):'—'}</td></tr>`; }).join('');
   const P=S.cfg.premissas;
   vPlan.depois=()=>{ ligarTips(document.getElementById('conteudo')); document.querySelectorAll('[data-prem]').forEach(i=>i.onchange=()=>{ P[i.dataset.prem]= i.value===''?null:parseFloat(i.value); document.getElementById('projecao').innerHTML=htmlProjecao(); ligarTips(document.getElementById('projecao')); }); };
-  return topo('Planejamento','Gap mês a mês, orçamento por categoria e projeção de longo prazo.') + htmlGap() + `
+  return topo('Planejamento','Gap mês a mês, plano até 2030, orçamento por categoria e projeção de longo prazo.') + htmlGap() + htmlHorizonte() + `
   <section class="painel">
     <div class="cab-painel"><div><h2>Planejado versus realizado</h2><div class="sub">Alertas em 70%, 90% e 100% do orçamento · despesas desde o Marco Zero${fatorMZ<1&&fatorMZ>0?` · orçamento proporcional aos ${diasNoMes(k)-(+corte().slice(8))+1} dias após o corte`:''}</div></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><div class="nav-periodo"><button type="button" aria-label="Mês anterior" onclick="UI.mesOrc=addYM(UI.mesOrc,-1);ir('plan')">‹</button><strong>${nomeYM(k)}</strong><button type="button" aria-label="Próximo mês" onclick="UI.mesOrc=addYM(UI.mesOrc,1);ir('plan')">›</button></div><button class="btn sec pequeno" onclick="editarOrcamento('${ano}')">Editar orçamento ${ano}</button></div></div>
-    <div class="balanco" style="margin:0 0 14px;box-shadow:none"><div><span>Orçado no mês</span><strong>${fmt0(totO)}</strong></div><div><span>Realizado</span><strong>${fmt0(totR)}</strong></div><div><span>Desvio</span><strong class="${totR>totO?'neg':'pos'}">${fmt0(totR-totO)}</strong><small>${totO?pct(totR/totO-1):''}</small></div><div><span>Previsão de fechamento</span><strong class="${totR/frac>totO?'neg':'pos'}">${fmt0(totR/Math.max(frac,.05))}</strong><small>no ritmo atual</small></div></div>
+    <div class="balanco" style="margin:0 0 14px;box-shadow:none"><div><span>Orçado no mês</span><strong>${fmt0(totO)}</strong></div><div><span>Realizado</span><strong>${fmt0(totR)}</strong></div><div><span>Desvio</span><strong class="${totR>totO?'neg':'pos'}">${fmt0(totR-totO)}</strong><small>${totO?pct(totR/totO-1):''}</small></div><div><span>Previsão de fechamento</span>${frac>=.25?`<strong class="${totR/frac>totO?'neg':'pos'}">${fmt0(totR/frac)}</strong><small>no ritmo atual</small>`:`<strong>—</strong><small>poucos dias para estimar o ritmo</small>`}</div></div>
     ${cats.length?`<div class="rolagem"><table class="tabela"><thead><tr><th>Categoria</th><th class="n">Planejado</th><th class="n">Realizado</th><th class="n">Desvio</th><th class="n esconde-m">Uso</th></tr></thead><tbody>${linhas}</tbody></table></div>`:'<div class="vazio">Defina o orçamento do ano para acompanhar.</div>'}
   </section>
   <section class="painel">
@@ -998,14 +1002,24 @@ function projetar(ajuste){
   const g=((+P.cresc_renda_aa||0)+ajuste.g)/100, inf=((+P.inflacao_aa||0)+ajuste.i)/100, r=((+P.rentab_aa||0)+ajuste.r)/100;
   const rm=Math.pow(1+r,1/12)-1; let caixa=tp.disp+tp.inv - tp.cartaoAberto; const out=[], k0=ym(HOJE);
   const passivoAmort = S.pat.filter(p=>p.natureza==='passivo'); let passivos=tp.passivos;
+  const anosPlano=S.planoRec.map(p=>p.ano), ultPlano=anosPlano.length?Math.max(...anosPlano):0;
+  const anosOrc=Object.keys(S.bud).map(Number).filter(a=>Object.keys(S.bud[a]).length), ultOrc=anosOrc.length?Math.max(...anosOrc):0;
+  const recAnoFinal = ultPlano? soma(S.planoRec.filter(p=>p.ano===ultPlano))/12 : renda0;
+  const despAnoFinal = ultOrc? soma(Object.values(S.bud[ultOrc]),x=>x) : fix0+var0;
   for(let t=1;t<=H;t++){
-    const k=addYM(k0,t);
-    const renda=renda0*Math.pow(1+g,Math.floor((t-1)/12));
+    const k=addYM(k0,t), ano=+k.slice(0,4), anosAdj=(t-1)/12;
+    const real=soma(S.ent.filter(e=>ym(e.data)===k)), pl=planoMes(k);
+    let renda, desp;
+    if(real||pl) renda=(real||pl)*Math.pow(1+ajuste.g/100,anosAdj);
+    else if(ultPlano) renda=recAnoFinal*Math.pow(1+g,Math.max(0,ano-ultPlano));
+    else renda=renda0*Math.pow(1+g,Math.floor((t-1)/12));
     const parcelas=soma(S.lanc.filter(l=>l.parcela && ym(dataCaixa(l))===k));
-    const desp=(fix0+var0)*Math.pow(1+inf,(t-1)/12)+parcelas;
+    if(S.bud[ano] && Object.keys(S.bud[ano]).length) desp=gapMes(k).previsto*Math.pow(1+ajuste.i/100,anosAdj);
+    else if(ultOrc) desp=despAnoFinal*Math.pow(1+inf,Math.max(0,ano-ultOrc))+parcelas;
+    else desp=(fix0+var0)*Math.pow(1+inf,(t-1)/12)+parcelas;
     const amort=soma(passivoAmort.filter(p=>p.valor_parcela && (p.parcelas_restantes==null||t<=p.parcelas_restantes)),p=>+p.valor_parcela);
     caixa = caixa*(1+rm) + renda - desp; passivos=Math.max(0,passivos-amort);
-    out.push({k, saldo:renda-desp, caixa, pl: caixa + tp.bens - passivos});
+    out.push({k, renda, desp, saldo:renda-desp, caixa, pl: caixa + tp.bens - passivos});
   }
   return out;
 }
@@ -1017,18 +1031,21 @@ function htmlProjecao(){
   <div class="grafico">${svgLinhas(idx.map(i=>curtoYM(cen[0].d[i].k)), cen.map(c=>({nome:c.nome,cor:c.cor,v:idx.map(i=>c.d[i].pl)})),{aria:'Patrimônio estimado por cenário',w:1100,h:300})}</div>
   <div class="rolagem" style="margin-top:12px"><table class="tabela"><thead><tr><th>Cenário</th>${marcos.map(m=>`<th class="n">${m} meses</th>`).join('')}<th class="n">Saldo/mês no fim</th></tr></thead><tbody>
   ${cen.map(c=>`<tr><td><b>${c.nome}</b><div class="lanc-meta">aplicações e caixa: ${fmt0(c.d[H-1].caixa)}</div></td>${marcos.map(m=>`<td class="n">${fmt0(c.d[m-1].pl)}</td>`).join('')}<td class="n ${c.d[H-1].saldo>=0?'pos':'neg'}">${fmt0(c.d[H-1].saldo)}</td></tr>`).join('')}</tbody></table></div>
-  <p class="nota">Patrimônio estimado = caixa e aplicações rendendo + bens (sem valorização) − dívidas amortizando. Ajustes por cenário: renda ±2 p.p., inflação +1,5/−1 p.p., rentabilidade −3/+2 p.p. Parcelas de cartão já lançadas entram nos meses em que vencem.</p>`;
+  <p class="nota">Patrimônio estimado = caixa e aplicações rendendo + bens (sem valorização) − dívidas amortizando. Enquanto houver plano (receitas planejadas e orçamento por ano), o cenário realista segue o plano exatamente; conservador e otimista ajustam renda (−2/+2 p.p. ao ano), despesas (+1,5/−1 p.p.) e rentabilidade (−3/+2 p.p.). Depois do último ano planejado, valem as premissas acima.</p>`;
 }
 function editarOrcamento(ano){
   const orc=S.bud[ano]||{};
   abrirModal(`<h2>Orçamento mensal de ${ano}</h2><p class="mudo" style="font-size:14px">Valor por mês em cada categoria. Deixe vazio para não orçar.</p>
    <div class="linha-campos" style="margin-top:14px">${S.cats.map(c=>`<div class="campo"><label>${esc(c)}</label><input type="number" data-orc="${esc(c)}" value="${orc[c]??''}"></div>`).join('')}</div>
+   <label style="display:flex;gap:8px;margin-top:14px;font-size:14px"><input type="checkbox" id="oSeg"> Aplicar os mesmos valores aos anos seguintes até 2030</label>
    <div class="botoes"><button class="btn sec" onclick="fecharModal()">Cancelar</button><button class="btn" id="oOk">Salvar orçamento</button></div>`);
   document.getElementById('oOk').onclick=async()=>{
     const linhas=[]; const novo={}; document.querySelectorAll('[data-orc]').forEach(i=>{ const v=parseFloat(i.value); if(v>0){ linhas.push({ano:+ano,categoria:i.dataset.orc,valor_mensal:v}); novo[i.dataset.orc]=v; } });
     const {error}=await sb.from('budgets').upsert(linhas,{onConflict:'ano,categoria'}); if(error) return erroBanco(error);
     const remover=Object.keys(orc).filter(c=>!(c in novo)); if(remover.length){ const r=await sb.from('budgets').delete().eq('ano',+ano).in('categoria',remover); if(r.error) return erroBanco(r.error); }
-    S.bud[ano]=novo; fecharModal(); avisar('Orçamento salvo'); ir('plan');
+    S.bud[ano]=novo;
+    if(document.getElementById('oSeg').checked){ for(let a=+ano+1;a<=2030;a++){ let r=await sb.from('budgets').delete().eq('ano',a); if(r.error) return erroBanco(r.error); r=await sb.from('budgets').insert(linhas.map(x=>({...x,ano:a}))); if(r.error) return erroBanco(r.error); S.bud[a]={...novo}; } }
+    fecharModal(); avisar('Orçamento salvo'); ir('plan');
   };
 }
 async function salvarConfig(chave,valor,msg){ const {error}=await sb.from('config').upsert({chave,valor,atualizado_em:new Date().toISOString()}); if(error) return erroBanco(error); S.cfg[chave]=valor; if(msg) avisar(msg); }
@@ -1077,8 +1094,8 @@ function juntarCategorias(){
 function gapMes(k){
   const kc=ym(corte()), ano=k.slice(0,4);
   const fator = k===kc ? (diasNoMes(k)-(+corte().slice(8))+1)/diasNoMes(k) : 1;
-  const ents=S.ent.filter(e=>ym(e.data)===k && pos(e)); let rec=soma(ents), recEst=false;
-  if(rec===0 && k>ym(HOJE)){ rec=rendaBase(); recEst=true; }
+  let ents=S.ent.filter(e=>ym(e.data)===k && pos(e)); let rec=soma(ents), recEst=false, recPlano=false;
+  if(rec===0 && k>ym(HOJE)){ const pl=planoItens(k); if(pl.length){ ents=pl.map(p=>({descricao:p.descricao,valor:p.valor,data:null})); rec=soma(pl); recPlano=true; } else { rec=rendaBase(); recEst=true; } }
   const caixa=S.lanc.filter(l=>ym(dataCaixa(l))===k && (k!==kc || dataCaixa(l)>=corte()));
   const comprometido=soma(caixa);
   const comp=S.lanc.filter(l=>ym(l.data)===k && pos(l)); const porCat={}; comp.forEach(l=>porCat[l.categoria]=(porCat[l.categoria]||0)+l.valor);
@@ -1090,7 +1107,7 @@ function gapMes(k){
     previsto=0; cats.forEach(c=>{ const o=(orc[c]||0)*fator, r=porCat[c]||0; const v=Math.max(o,r); previsto+=v; linhasCat.push({c,o,r,v}); });
   } else { base='premissa'; previsto=soma(comp)+(k>=ym(HOJE)?(+S.cfg.premissas.gasto_variavel_mensal||0)*fator:0); Object.entries(porCat).forEach(([c,r])=>linhasCat.push({c,o:0,r,v:r})); }
   linhasCat.sort((a,b)=>b.v-a.v);
-  return {k,rec,recEst,ents,comprometido,caixa,previsto,base,linhasCat,gapComp:rec-comprometido,gapPrev:rec-previsto,fator};
+  return {k,rec,recEst,recPlano,ents,comprometido,caixa,previsto,base,linhasCat,gapComp:rec-comprometido,gapPrev:rec-previsto,fator};
 }
 function htmlGap(){
   const k0=ym(HOJE); const meses=[]; for(let i=0;i<12;i++) meses.push(gapMes(addYM(k0,i)));
@@ -1110,9 +1127,9 @@ function htmlGap(){
    <div class="cab-painel"><div><h2>Gap mês a mês</h2><div class="sub">Quanto sobra ou falta em cada mês: receitas menos despesas. Clique em um mês para ver o que compõe o valor.</div></div></div>
    <div class="grafico">${g}</div>
    <div class="rolagem" style="margin-top:14px"><table class="tabela"><thead><tr><th>Mês</th><th class="n">Receitas</th><th class="n">Já comprometido</th><th class="n">Gap do que já está lançado</th><th class="n">Despesa prevista</th><th class="n">Gap previsto</th><th class="n esconde-m">Acumulado</th></tr></thead><tbody>
-   ${meses.map(m=>`<tr class="clicavel" data-gap="${m.k}" tabindex="0"><td><b>${nomeYM(m.k)}</b>${m.k===ym(corte())?'<div class="lanc-meta">desde o Marco Zero</div>':''}</td><td class="n">${fmt0(m.rec)}${m.recEst?' <span class="etiqueta info">estimada</span>':''}</td><td class="n">${fmt0(m.comprometido)}</td><td class="n ${m.gapComp>=0?'gap-pos':'gap-neg'}">${fmt0(m.gapComp)}</td><td class="n">${fmt0(m.previsto)}</td><td class="n ${m.gapPrev>=0?'gap-pos':'gap-neg'}">${fmt0(m.gapPrev)}</td><td class="n esconde-m">${fmt0(m.acc)}</td></tr>`).join('')}</tbody>
+   ${meses.map(m=>`<tr class="clicavel" data-gap="${m.k}" tabindex="0"><td><b>${nomeYM(m.k)}</b>${m.k===ym(corte())?'<div class="lanc-meta">desde o Marco Zero</div>':''}</td><td class="n">${fmt0(m.rec)}${m.recEst?' <span class="etiqueta info">estimada</span>':m.recPlano?' <span class="etiqueta info">planejada</span>':''}</td><td class="n">${fmt0(m.comprometido)}</td><td class="n ${m.gapComp>=0?'gap-pos':'gap-neg'}">${fmt0(m.gapComp)}</td><td class="n">${fmt0(m.previsto)}</td><td class="n ${m.gapPrev>=0?'gap-pos':'gap-neg'}">${fmt0(m.gapPrev)}</td><td class="n esconde-m">${fmt0(m.acc)}</td></tr>`).join('')}</tbody>
    <tfoot><tr><td>12 meses</td><td class="n">${fmt0(soma(meses,m=>m.rec))}</td><td class="n">${fmt0(soma(meses,m=>m.comprometido))}</td><td class="n">${fmt0(soma(meses,m=>m.gapComp))}</td><td class="n">${fmt0(soma(meses,m=>m.previsto))}</td><td class="n ${acc>=0?'gap-pos':'gap-neg'}">${fmt0(acc)}</td><td class="esconde-m"></td></tr></tfoot></table></div>
-   <p class="nota"><b>Já comprometido</b> = o que sai do caixa naquele mês pelo que já está lançado (faturas pelo vencimento, débitos, recorrências). <b>Despesa prevista</b> = ${base==='orcamento'?'em cada categoria, o maior valor entre o orçamento do mês e o que já foi lançado':'o que já foi lançado mais os gastos variáveis das premissas'}. Meses sem receita lançada usam a renda típica (${fmt0(rendaBase())}), marcada como estimada.</p>
+   <p class="nota"><b>Já comprometido</b> = o que sai do caixa naquele mês pelo que já está lançado (faturas pelo vencimento, débitos, recorrências). <b>Despesa prevista</b> = ${base==='orcamento'?'em cada categoria, o maior valor entre o orçamento do mês e o que já foi lançado':'o que já foi lançado mais os gastos variáveis das premissas'}. Meses sem receita lançada usam as receitas planejadas (até ${S.planoRec.length?Math.max(...S.planoRec.map(p=>p.ano)):'—'}) ou, sem plano, a renda típica de ${fmt0(rendaBase())}.</p>
   </section>`;
 }
 document.addEventListener('click',e=>{ const d=e.target.closest('[data-gap]'); if(d) abrirGap(d.dataset.gap); });
@@ -1123,8 +1140,8 @@ function abrirGap(k){
   const outros=m.caixa.filter(l=>l.forma!=='Crédito');
   abrirModal(`<h2>${nomeYM(k)}</h2><p class="mudo" style="font-size:14px">Gap previsto <b class="${m.gapPrev>=0?'pos':'neg'}">${fmt(m.gapPrev)}</b> · gap do que já está lançado <b class="${m.gapComp>=0?'pos':'neg'}">${fmt(m.gapComp)}</b></p>
   <div class="razao" style="margin-top:12px">
-    <div class="l"><span><b>Receitas</b>${m.recEst?' (estimadas pela renda típica)':''}</span><b class="pos">${fmt(m.rec)}</b></div>
-    ${m.ents.map(e=>`<div class="l"><span style="padding-left:12px">${esc(e.descricao)} · ${dataBR(e.data)}</span><span>${fmt(e.valor)}</span></div>`).join('')}
+    <div class="l"><span><b>Receitas</b>${m.recEst?' (estimadas pela renda típica)':m.recPlano?' (planejadas)':''}</span><b class="pos">${fmt(m.rec)}</b></div>
+    ${m.ents.map(e=>`<div class="l"><span style="padding-left:12px">${esc(e.descricao)}${e.data?' · '+dataBR(e.data):''}</span><span>${fmt(e.valor)}</span></div>`).join('')}
     <div class="l"><span><b>Saídas já comprometidas</b></span><b class="neg">${fmt(m.comprometido)}</b></div>
     ${Object.entries(fat).map(([c,v])=>`<div class="l"><span style="padding-left:12px">Fatura ${esc(c)}</span><span>${fmt(v)}</span></div>`).join('')}
     ${outros.map(l=>`<div class="l"><span style="padding-left:12px">${esc(l.descricao||l.categoria)} · ${esc(l.forma)} · ${dataBR(l.data)}</span><span>${fmt(l.valor)}</span></div>`).join('')}
@@ -1134,6 +1151,49 @@ function abrirGap(k){
   ${m.linhasCat.map(x=>`<tr class="clicavel" data-drill="${T(JSON.stringify({k,cat:x.c}))}"><td>${esc(x.c)}</td><td class="n">${x.o?fmt0(x.o):'—'}</td><td class="n">${fmt0(x.r)}</td><td class="n"><b>${fmt0(x.v)}</b></td></tr>`).join('')}
   </tbody></table></div>
   <div class="botoes"><button class="btn sec" onclick="fecharModal()">Fechar</button></div>`);
+}
+
+
+/* =====================================================================
+   HORIZONTE ATÉ 2030 (plano anual) + editor de receitas planejadas
+   ===================================================================== */
+function htmlHorizonte(){
+  const fim='2030-12', k0=ym(HOJE); let n=0; while(addYM(k0,n)<fim) n++;
+  const sH=UI.horizonte; UI.horizonte=n; const d=projetar({g:0,i:0,r:0}); UI.horizonte=sH;
+  const anos={}; d.forEach(m=>{ const a=m.k.slice(0,4); (anos[a] ||= {rec:0,desp:0,meses:0}); anos[a].rec+=m.renda; anos[a].desp+=m.desp; anos[a].meses++; anos[a].caixa=m.caixa; anos[a].pl=m.pl; });
+  const tp=totaisPatrimonio();
+  const ini=tp.disp+tp.inv-tp.cartaoAberto;
+  const pts=d.map(m=>m.caixa);
+  return `<section class="painel">
+   <div class="cab-painel"><div><h2>Plano até 2030</h2><div class="sub">Receitas planejadas e orçamento de cada ano. O caixa começa com ${fmt0(ini)} (disponível + investimentos − cartões em aberto) e rende ${String(S.cfg.premissas.rentab_aa).replace('.',',')}% a.a.</div></div>
+   <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sec pequeno" onclick="editarPlanoReceitas()">Editar receitas planejadas</button><button class="btn sec pequeno" onclick="editarOrcamento('${Math.max(2027,+HOJE.slice(0,4)+1)}')">Editar orçamento</button></div></div>
+   <div class="grafico"><div class="legenda-g"><span><i style="background:#0F7A55"></i>Caixa e aplicações acumulados (cenário do plano)</span></div>${svgLinhas(d.map(m=>curtoYM(m.k)),[{nome:'Caixa e aplicações',v:pts,cor:'#0F7A55'}],{aria:'Caixa acumulado até 2030',w:1100,h:240})}</div>
+   <div class="rolagem" style="margin-top:12px"><table class="tabela"><thead><tr><th>Ano</th><th class="n">Receitas</th><th class="n">Despesas previstas</th><th class="n">Saldo do ano</th><th class="n">Economia</th><th class="n">Caixa no fim do ano</th><th class="n esconde-m">Patrimônio estimado</th></tr></thead><tbody>
+   ${Object.entries(anos).map(([a,v])=>`<tr><td><b>${a}</b>${v.meses<12?`<div class="lanc-meta">${v.meses} ${v.meses>1?'meses':'mês'} restantes</div>`:''}</td><td class="n">${fmt0(v.rec)}</td><td class="n">${fmt0(v.desp)}</td><td class="n ${v.rec-v.desp>=0?'gap-pos':'gap-neg'}">${fmt0(v.rec-v.desp)}</td><td class="n">${v.rec?pct((v.rec-v.desp)/v.rec):'—'}</td><td class="n">${fmt0(v.caixa)}</td><td class="n esconde-m">${fmt0(v.pl)}</td></tr>`).join('')}
+   </tbody></table></div>
+   <p class="nota">Plano, não garantia. Despesa prevista = em cada categoria, o maior valor entre o orçamento e o que já está lançado (parcelas e recorrências). Receitas: o que está lançado, senão o plano. Os bens entram no patrimônio sem valorização.</p>
+  </section>`;
+}
+function editarPlanoReceitas(anoSel){
+  const anos=[...new Set([...S.planoRec.map(p=>p.ano), +HOJE.slice(0,4)+1])].sort(); const ano=+(anoSel||anos[0]||2027);
+  const itens=S.planoRec.filter(p=>p.ano===ano); const descs=[...new Set(itens.map(p=>p.descricao))];
+  const val=(d,m)=>itens.find(p=>p.descricao===d&&p.mes===m)?.valor??'';
+  const linha=(d,i)=>`<tr><td><input type="text" data-pd="${i}" value="${esc(d)}" style="min-width:150px"></td>${[...Array(12).keys()].map(m=>`<td><input type="number" data-pv="${i}-${m+1}" value="${val(d,m+1)}" style="min-width:84px;padding:6px 8px"></td>`).join('')}</tr>`;
+  abrirModal(`<h2>Receitas planejadas</h2><p class="mudo" style="font-size:14px">Valores previstos por mês. Quando a receita real for lançada, ela substitui o plano daquele mês.</p>
+   <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap"><div class="segmentado">${[...new Set([...anos,2027,2028,2029,2030])].sort().map(a=>`<button type="button" aria-pressed="${a===ano}" onclick="editarPlanoReceitas(${a})">${a}</button>`).join('')}</div></div>
+   <div class="rolagem" style="margin-top:12px"><table class="tabela" id="tPlano"><thead><tr><th>Receita</th>${MESES_C.map(m=>`<th>${m}</th>`).join('')}</tr></thead><tbody>${descs.map(linha).join('')}${linha('',descs.length)}</tbody></table></div>
+   <label style="display:flex;gap:8px;margin-top:12px;font-size:14px"><input type="checkbox" id="pSeg"> Aplicar a mesma tabela aos anos seguintes até 2030</label>
+   <div class="botoes"><button class="btn sec" onclick="fecharModal()">Cancelar</button><button class="btn" id="pOk">Salvar ${ano}</button></div>`);
+  document.getElementById('modalCaixa').style.maxWidth='1100px';
+  document.getElementById('pOk').onclick=async()=>{
+    const linhas=[]; document.querySelectorAll('[data-pd]').forEach(inp=>{ const i=inp.dataset.pd, d=inp.value.trim(); if(!d) return;
+      for(let m=1;m<=12;m++){ const v=parseFloat(document.querySelector(`[data-pv="${i}-${m}"]`).value); if(v>0) linhas.push({ano,mes:m,descricao:d,valor:v}); } });
+    const alvo=[ano]; if(document.getElementById('pSeg').checked) for(let a=ano+1;a<=2030;a++) alvo.push(a);
+    for(const a of alvo){ let r=await sb.from('plano_receitas').delete().eq('ano',a); if(r.error) return erroBanco(r.error);
+      if(linhas.length){ r=await sb.from('plano_receitas').insert(linhas.map(x=>({...x,ano:a}))); if(r.error) return erroBanco(r.error); } }
+    S.planoRec=S.planoRec.filter(p=>!alvo.includes(p.ano)).concat(alvo.flatMap(a=>linhas.map(x=>({...x,ano:a}))));
+    fecharModal(); avisar('Receitas planejadas salvas'); ir('plan');
+  };
 }
 
 /* =====================================================================
